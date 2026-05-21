@@ -1,0 +1,358 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* HSL Sleek Dark Palette */
+  --bg-app: #0b0f19;
+  --bg-sidebar: #111827;
+  --bg-chat: #0f172a;
+  --bg-panel: #1e293b;
+  --border-color: #334155;
+  
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --accent-blue: #3b82f6;
+  --accent-blue-hover: #60a5fa;
+  --accent-blue-transparent: rgba(59, 130, 246, 0.15);
+  
+  --accent-green: #10b981;
+  --accent-green-transparent: rgba(16, 185, 129, 0.15);
+
+  --accent-red: #ef4444;
+  --accent-red-transparent: rgba(239, 68, 68, 0.15);
+
+  --accent-yellow: #f59e0b;
+  --accent-yellow-transparent: rgba(245, 158, 11, 0.15);
+
+  --bubble-incoming: #1e293b;
+  --bubble-outgoing: #1e3a8a;
+  --bubble-draft: rgba(30, 41, 59, 0.6);
+  --bubble-system: rgba(51, 65, 85, 0.4);
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+
+  --sidebar-width: 320px;
+  --inspector-width: 360px;
+}
+
+/* Base resets */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+input, button, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+}
+
+a {
+  color: var(--accent-blue);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Animation utilities */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Layout containers */
+.app-container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Connection Badges */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.connected {
+  background-color: var(--accent-green-transparent);
+  color: var(--accent-green);
+}
+
+.status-badge.connecting, .status-badge.reconnecting {
+  background-color: var(--accent-yellow-transparent);
+  color: var(--accent-yellow);
+}
+
+.status-badge.offline {
+  background-color: var(--accent-red-transparent);
+  color: var(--accent-red);
+}
+
+/* Telegram Entities Styles */
+.telegram-underline {
+  text-decoration: underline;
+}
+
+.telegram-strikethrough {
+  text-decoration: line-through;
+}
+
+.telegram-code {
+  font-family: var(--font-mono);
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: #f43f5e;
+}
+
+.telegram-pre {
+  display: block;
+  font-family: var(--font-mono);
+  background-color: rgba(0, 0, 0, 0.4);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.85em;
+  margin: 8px 0;
+  overflow-x: auto;
+  border-left: 3px solid var(--accent-blue);
+  color: #38bdf8;
+}
+
+.pre-lang {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-weight: bold;
+}
+
+.telegram-link {
+  color: var(--accent-blue-hover);
+  word-break: break-all;
+}
+
+.telegram-blockquote {
+  border-left: 4px solid var(--border-color);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.telegram-spoiler {
+  background-color: #334155;
+  color: transparent !important;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background-color 0.2s, color 0.2s;
+  user-select: none;
+}
+
+.telegram-spoiler:hover {
+  background-color: #475569;
+}
+
+.telegram-spoiler.revealed {
+  background-color: transparent;
+  color: inherit !important;
+  cursor: default;
+}
+
+.telegram-custom-emoji {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background-color: rgba(255, 255, 255, 0.05);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.emoji-badge {
+  font-size: 0.7rem;
+}
+
+/* Media Cards styling */
+.media-preview-container {
+  margin-top: 10px;
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+}
+
+.media-image {
+  max-width: 100%;
+  max-height: 250px;
+  object-fit: cover;
+  display: block;
+}
+
+.media-file-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.media-audio-card {
+  padding: 10px 12px;
+}
+
+.media-waveform {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 24px;
+  margin-top: 6px;
+}
+
+.waveform-bar {
+  flex: 1;
+  background-color: var(--accent-blue-hover);
+  border-radius: 1px;
+}
+
+/* Utility buttons */
+.btn-primary {
+  background-color: var(--accent-blue);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--accent-blue-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-color);
+  transition: background-color 0.2s;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Tooltip */
+[data-tooltip] {
+  position: relative;
+}
+[data-tooltip]::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-4px);
+  background-color: #020617;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  border: 1px solid var(--border-color);
+}
+[data-tooltip]:hover::before {
+  opacity: 1;
+}
+
+/* Settings Form elements */
+.settings-group {
+  margin-bottom: 20px;
+}
+.settings-group label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.settings-input {
+  width: 100%;
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: white;
+}
+.settings-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
