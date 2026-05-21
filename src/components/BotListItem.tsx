@@ -1,4 +1,5 @@
 import React from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { BotSummary } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { Pin, AlertOctagon } from "lucide-react";
@@ -9,6 +10,8 @@ interface BotListItemProps {
 
 export const BotListItem: React.FC<BotListItemProps> = ({ bot }) => {
   const { activeBotId, selectBot } = useApp();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const isActive = activeBotId === bot.id;
 
@@ -37,7 +40,12 @@ export const BotListItem: React.FC<BotListItemProps> = ({ bot }) => {
 
   return (
     <div
-      onClick={() => selectBot(bot.id)}
+      onClick={() => {
+        selectBot(bot.id);
+        if (!location.pathname.startsWith("/bots") && location.pathname !== "/") {
+          navigate(`/bots/${bot.id}`);
+        }
+      }}
       style={{
         display: "flex",
         alignItems: "center",
@@ -51,7 +59,7 @@ export const BotListItem: React.FC<BotListItemProps> = ({ bot }) => {
         position: "relative",
       }}
       onMouseEnter={(e) => {
-        if (!isActive) e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+        if (!isActive) e.currentTarget.style.backgroundColor = "var(--bg-app)";
       }}
       onMouseLeave={(e) => {
         if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
@@ -79,7 +87,7 @@ export const BotListItem: React.FC<BotListItemProps> = ({ bot }) => {
       {/* Details */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "2px" }}>
-          <span style={{ fontSize: "0.85rem", fontWeight: "600", color: isActive ? "white" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: "0.85rem", fontWeight: "600", color: isActive ? "var(--accent-blue)" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {bot.title}
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
@@ -94,13 +102,13 @@ export const BotListItem: React.FC<BotListItemProps> = ({ bot }) => {
         <div
           style={{
             fontSize: "0.75rem",
-            color: "var(--text-secondary)",
+            color: "var(--text-muted)",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           }}
         >
-          {bot.lastMessagePreview || "No messages yet"}
+          @{bot.username || "unknown_bot"}
         </div>
       </div>
 

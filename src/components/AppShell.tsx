@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Sidebar } from "./Sidebar";
 import { MessageInspector } from "./MessageInspector";
-import { EventLogPanel } from "./EventLogPanel";
 import { useApp } from "../context/AppContext";
 import { Menu, X } from "lucide-react";
 import { useLocation } from "react-router-dom";
@@ -40,7 +39,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
       >
         <button
           onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-          style={{ color: "white", cursor: "pointer", display: "flex", alignItems: "center" }}
+          style={{ color: "var(--text-primary)", cursor: "pointer", display: "flex", alignItems: "center" }}
         >
           {mobileSidebarOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
@@ -77,9 +76,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             </div>
           )}
         </div>
-
-        {/* WebSocket Log Panel */}
-        <EventLogPanel />
       </div>
 
       {/* Dynamic styles for layout responsiveness */}
@@ -101,8 +97,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             bottom: 0;
             width: 320px;
             z-index: 15;
-            box-shadow: -4px 0 12px rgba(0,0,0,0.5);
-            animation: slide-in-right 0.2s ease-out;
+            box-shadow: -4px 0 12px rgba(0,0,0,0.15);
+            animation: slideInRight 0.2s ease-out;
           }
         }
         @media (max-width: 768px) {

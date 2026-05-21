@@ -41,7 +41,7 @@ export const DownloadsPage: React.FC = () => {
     >
       {/* Header */}
       <div style={{ marginBottom: "24px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px" }}>
-        <h1 style={{ fontSize: "1.2rem", fontWeight: "700", color: "white", display: "flex", alignItems: "center", gap: "8px" }}>
+        <h1 style={{ fontSize: "1.2rem", fontWeight: "700", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px" }}>
           <Download size={20} style={{ color: "var(--accent-blue)" }} />
           <span>Server Proxy Downloads Queue</span>
         </h1>
@@ -86,7 +86,7 @@ export const DownloadsPage: React.FC = () => {
             gridTemplateColumns: "2fr 1fr 1fr 2fr",
             padding: "10px 16px",
             borderBottom: "1px solid var(--border-color)",
-            backgroundColor: "rgba(0,0,0,0.15)",
+            backgroundColor: "#f1f5f9",
             fontSize: "0.75rem",
             fontWeight: "bold",
             color: "var(--text-secondary)",
@@ -124,7 +124,7 @@ export const DownloadsPage: React.FC = () => {
                 <span
                   style={{
                     fontWeight: "500",
-                    color: "white",
+                    color: "var(--text-primary)",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",

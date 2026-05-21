@@ -75,7 +75,7 @@ export const ChatPage: React.FC = () => {
       >
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <h1 style={{ fontSize: "0.95rem", fontWeight: "700", color: "white" }}>
+            <h1 style={{ fontSize: "0.95rem", fontWeight: "700", color: "var(--text-primary)" }}>
               {activeBot.title}
             </h1>
             <span

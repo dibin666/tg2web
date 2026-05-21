@@ -10,7 +10,7 @@ interface DownloadProgressProps {
 }
 
 export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, fileName, sizeBytes, messageId }) => {
-  const { downloads, downloadMedia } = useApp();
+  const { downloads, downloadMedia, t } = useApp();
 
   const activeDownload = downloads.find((d) => d.fileId === fileId);
 
@@ -30,82 +30,84 @@ export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, file
     return (
       <button className="btn-secondary" onClick={handleDownload} style={{ padding: "4px 8px", fontSize: "0.8rem", gap: "4px" }}>
         <Download size={12} />
-        <span>Download ({formatBytes(sizeBytes)})</span>
+        <span>{t("downloadBtn")} ({formatBytes(sizeBytes)})</span>
       </button>
     );
   }
 
-  const { status, downloadedBytes, error, proxyUrl } = activeDownload;
+  const { status, downloadedBytes, error } = activeDownload;
   const total = sizeBytes || activeDownload.sizeBytes || 0;
   const progressPercent = total > 0 ? Math.min(100, Math.round((downloadedBytes / total) * 100)) : 0;
 
   switch (status) {
     case "queued":
       return (
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px", width: "100%", maxWidth: "250px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-            <Loader size={12} className="animate-pulse-slow" />
-            <span>Queued in Server Proxy...</span>
-          </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+          <Loader size={12} className="animate-pulse-slow" style={{ color: "var(--accent-blue)" }} />
+          <span>{t("statusPreparing")}</span>
         </div>
       );
 
     case "downloading":
       return (
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px", width: "100%", maxWidth: "250px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-            <span>Downloading on Server...</span>
-            <span>{progressPercent}%</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px", width: "100%", minWidth: "180px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: "500" }}>
+            <span>{t("statusDownloading")} {progressPercent}%</span>
+            <span>({formatBytes(downloadedBytes)} / {formatBytes(total)})</span>
           </div>
-          <div style={{ height: "4px", backgroundColor: "#334155", borderRadius: "2px", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${progressPercent}%`, backgroundColor: "var(--accent-blue)", transition: "width 0.2s" }} />
-          </div>
-          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", alignSelf: "flex-end" }}>
-            {formatBytes(downloadedBytes)} / {formatBytes(total)}
+          <div style={{ height: "4px", backgroundColor: "var(--border-color)", borderRadius: "2px", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${progressPercent}%`, backgroundColor: "var(--accent-blue)", transition: "width 0.25s cubic-bezier(0.25, 0.8, 0.25, 1)" }} />
           </div>
         </div>
       );
 
     case "ready":
       return (
-        <a
-          href={proxyUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn-primary"
-          style={{
-            padding: "4px 8px",
-            fontSize: "0.8rem",
-            backgroundColor: "var(--accent-green)",
-            gap: "4px",
-          }}
-          onClick={(e) => {
-            // Stop propagation so it doesn't open the chat view message inspector
-            e.stopPropagation();
-          }}
-        >
-          <CheckCircle size={12} />
-          <span>Save to Local ({formatBytes(total)})</span>
-        </a>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }} onClick={(e) => e.stopPropagation()}>
+          <span style={{ color: "var(--accent-green)", fontSize: "0.8rem", fontWeight: "600", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+            <CheckCircle size={14} />
+            <span>{t("savedStatusShort")}</span>
+          </span>
+          <button
+            onClick={handleDownload}
+            title={t("downloadAgainTooltip")}
+            style={{
+              color: "var(--accent-blue)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "4px",
+              borderRadius: "4px",
+              border: "1px solid var(--border-color)",
+              backgroundColor: "white",
+              transition: "var(--transition-smooth)",
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--bg-app)"}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "white"}
+          >
+            <Download size={11} />
+          </button>
+        </div>
       );
 
     case "failed":
       return (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--accent-red)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--accent-red)" }} onClick={(e) => e.stopPropagation()}>
           <AlertCircle size={12} />
-          <span title={error || "Failed to download"}>Download Failed</span>
+          <span title={error || t("statusFailed")}>{t("statusFailed")}</span>
           <button onClick={handleDownload} style={{ color: "var(--accent-blue)", textDecoration: "underline", fontSize: "0.75rem", cursor: "pointer" }}>
-            Retry
+            {t("retryBtn")}
           </button>
         </div>
       );
 
     case "expired":
       return (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--text-muted)" }}>
-          <span>Cache Expired</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--text-muted)" }} onClick={(e) => e.stopPropagation()}>
+          <span>{t("expiredStatus")}</span>
           <button onClick={handleDownload} style={{ color: "var(--accent-blue)", textDecoration: "underline", fontSize: "0.75rem", cursor: "pointer" }}>
-            Refetch
+            {t("refetchBtn")}
           </button>
         </div>
       );

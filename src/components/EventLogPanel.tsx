@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
-import { Terminal, RefreshCw, AlertCircle, XCircle, Power, Play, Trash2 } from "lucide-react";
+import { Terminal, RefreshCw, AlertCircle, XCircle, Power, Play, Trash2, FilePlus } from "lucide-react";
 import { AppEvent } from "../api/types";
 
 export const EventLogPanel: React.FC = () => {
@@ -11,6 +11,7 @@ export const EventLogPanel: React.FC = () => {
     if (type.startsWith("message.")) return { bg: "var(--accent-green-transparent)", text: "var(--accent-green)" };
     if (type.startsWith("draft.")) return { bg: "var(--accent-blue-transparent)", text: "var(--accent-blue-hover)" };
     if (type.startsWith("download.")) return { bg: "rgba(147, 51, 234, 0.15)", text: "#c084fc" };
+    if (type === "file.new") return { bg: "rgba(236, 72, 153, 0.15)", text: "#f472b6" };
     if (type.includes("failed") || type.includes("error")) return { bg: "var(--accent-red-transparent)", text: "var(--accent-red)" };
     return { bg: "rgba(255,255,255,0.05)", text: "var(--text-secondary)" };
   };
@@ -43,6 +44,8 @@ export const EventLogPanel: React.FC = () => {
         return `Download ready [${ev.download.id}]: file saved at server proxy: ${ev.download.proxyUrl}`;
       case "download.failed":
         return `Download failed [${ev.download.id}]: ${ev.download.error || "connection failure"}`;
+      case "file.new":
+        return `New workspace file [${ev.file.id}]: "${ev.file.fileName}" (${ev.file.mimeType}) sender=${ev.file.senderName}`;
       case "telegram.error":
         return `Telegram error code [${ev.code}]: ${ev.message}`;
       default:
@@ -194,6 +197,24 @@ export const EventLogPanel: React.FC = () => {
             >
               <Power size={12} />
               <span>Cycle TDLib Connection</span>
+            </button>
+
+            {/* File Arrival Simulation */}
+            <button
+              onClick={() => triggerSimulation("file_new")}
+              disabled={!activeBotId}
+              className="btn-secondary"
+              style={{
+                justifyContent: "flex-start",
+                padding: "6px 8px",
+                fontSize: "0.75rem",
+                gap: "6px",
+                opacity: activeBotId ? 1 : 0.5,
+              }}
+              title={activeBotId ? "Simulate a new file received by this bot" : "Select a bot first"}
+            >
+              <FilePlus size={12} style={{ color: "#ec4899" }} />
+              <span>Simulate File Arrival</span>
             </button>
           </div>
 
