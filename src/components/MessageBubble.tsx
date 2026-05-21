@@ -1,24 +1,17 @@
 import React from "react";
 import { ChatMessage } from "../api/types";
-import { useApp } from "../context/AppContext";
 import { EntityTextRenderer } from "./EntityTextRenderer";
 import { MediaPreview } from "./MediaPreview";
 import { InlineKeyboardPreview } from "./InlineKeyboardPreview";
 import { Check, CheckCheck, Clock, AlertTriangle, ShieldCheck } from "lucide-react";
+import { useApp } from "../context/AppContext";
 
 interface MessageBubbleProps {
   message: ChatMessage;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
-  const { selectedMessage, setSelectedMessage } = useApp();
-
-  const isSelected = selectedMessage?.id === message.id;
-
-  const handleSelect = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSelectedMessage(isSelected ? null : message);
-  };
+  const { userRole, t } = useApp();
 
   const formatTime = (isoString: string) => {
     try {
@@ -32,26 +25,23 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   if (message.direction === "system" || message.status === "deleted") {
     return (
       <div
-        onClick={handleSelect}
         style={{
           display: "flex",
           justifyContent: "center",
           margin: "12px 0",
           width: "100%",
-          cursor: "pointer",
         }}
       >
         <div
           style={{
             backgroundColor: "var(--bubble-system)",
-            border: `1px solid ${isSelected ? "var(--accent-blue)" : "var(--border-color)"}`,
+            border: "1px solid var(--border-color)",
             borderRadius: "6px",
             padding: "6px 16px",
             fontSize: "0.75rem",
             color: message.status === "deleted" ? "var(--accent-red)" : "var(--text-secondary)",
             maxWidth: "80%",
             textAlign: "center",
-            boxShadow: isSelected ? "0 0 8px rgba(59, 130, 246, 0.4)" : "none",
           }}
         >
           {message.status === "deleted" ? "[Message Deleted]" : message.text}
@@ -69,13 +59,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
 
   return (
     <div
-      onClick={handleSelect}
       style={{
         display: "flex",
         justifyContent: isOutgoing ? "flex-end" : "flex-start",
         margin: "8px 0",
         width: "100%",
-        cursor: "pointer",
       }}
     >
       <div
@@ -101,7 +89,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
         >
           {isOutgoing ? (
             <>
-              {message.sentByInternalUser && (
+              {userRole === "admin" && message.sentByInternalUser && (
                 <span
                   style={{
                     display: "inline-flex",
@@ -112,7 +100,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
                   }}
                 >
                   <ShieldCheck size={10} />
-                  {message.sentByInternalUser.displayName} (Audit)
+                  {message.sentByInternalUser.id === "user_key"
+                    ? `${t("sentViaKey")} ${message.sentByInternalUser.displayName}`
+                    : `${message.sentByInternalUser.displayName}`}
                 </span>
               )}
             </>
@@ -125,13 +115,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
         <div
           style={{
             backgroundColor: isOutgoing ? "var(--bubble-outgoing)" : "var(--bubble-incoming)",
-            border: `1px dashed ${isSelected ? "var(--accent-blue)" : "transparent"}`,
-            outline: isSelected ? "1px solid var(--accent-blue)" : "none",
             borderRadius: isOutgoing ? "12px 12px 2px 12px" : "12px 12px 12px 2px",
             padding: "8px 12px",
             position: "relative",
             width: "100%",
-            boxShadow: isSelected ? "0 0 12px rgba(59, 130, 246, 0.3)" : "var(--shadow-sm)",
+            boxShadow: "var(--shadow-sm)",
             borderLeft: message.status === "failed" ? "3px solid var(--accent-red)" : undefined,
           }}
         >
@@ -141,7 +129,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
               style={{
                 fontSize: "0.9rem",
                 lineHeight: "1.4",
-                color: message.status === "failed" ? "rgba(255,255,255,0.7)" : "var(--text-primary)",
+                color: message.status === "failed" ? "rgba(255,255,255,0.7)" : (isOutgoing ? "var(--bubble-outgoing-text)" : "var(--bubble-incoming-text)"),
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
               }}
@@ -173,7 +161,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
               gap: "4px",
               marginTop: "4px",
               fontSize: "0.65rem",
-              color: "var(--text-muted)",
+              color: isOutgoing ? "rgba(255, 255, 255, 0.7)" : "var(--text-muted)",
             }}
           >
             {message.editedAt && <span>edited</span>}

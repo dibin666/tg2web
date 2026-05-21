@@ -1,5 +1,5 @@
 import { ApiClient } from "./client";
-import { BotSummary, ChatMessage, SendMessageRequest, DownloadItem, Settings, AppEvent, TelegramEntity } from "./types";
+import { BotSummary, ChatMessage, SendMessageRequest, DownloadItem, Settings, AppEvent, TelegramEntity, WorkspaceFile } from "./types";
 
 // In-Memory state for the session
 const mockBots: BotSummary[] = [
@@ -270,6 +270,74 @@ const mockDownloads: DownloadItem[] = [
   },
 ];
 
+const mockWorkspaceFiles: WorkspaceFile[] = [
+  {
+    id: "wf_1",
+    botId: "bot_3",
+    messageId: "msg_3_2",
+    fileId: "file_photo_01",
+    fileName: "Grid_Render_Output.jpg",
+    mimeType: "image/jpeg",
+    sizeBytes: 4404012,
+    senderName: "Midjourney Bot",
+    receivedAt: new Date(Date.now() - 3600000).toISOString(),
+    status: "pending",
+    tag: "Design",
+    thumbnailUrl: "https://picsum.photos/seed/tg2web_photo/300/200"
+  },
+  {
+    id: "wf_2",
+    botId: "bot_4",
+    messageId: "msg_4_2",
+    fileId: "file_doc_01",
+    fileName: "Trellis_Workflow_Guidelines.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 1548200,
+    senderName: "Trellis Manager",
+    receivedAt: new Date(Date.now() - 7200000).toISOString(),
+    status: "approved",
+    tag: "Trellis Spec"
+  },
+  {
+    id: "wf_3",
+    botId: "bot_1",
+    messageId: "msg_1_2",
+    fileId: "file_voice_01",
+    fileName: "audio_briefing.ogg",
+    mimeType: "audio/ogg",
+    sizeBytes: 145408,
+    senderName: "Alice Chen (PM)",
+    receivedAt: new Date(Date.now() - 10800000).toISOString(),
+    status: "pending"
+  },
+  {
+    id: "wf_4",
+    botId: "bot_2",
+    messageId: "msg_2_2",
+    fileId: "file_video_01",
+    fileName: "security_cam_clip.mp4",
+    mimeType: "video/mp4",
+    sizeBytes: 13002300,
+    senderName: "Server Monitor Bot",
+    receivedAt: new Date(Date.now() - 18000000).toISOString(),
+    status: "rejected",
+    tag: "Security"
+  },
+  {
+    id: "wf_5",
+    botId: "bot_4",
+    messageId: "msg_4_1",
+    fileId: "file_audio_01",
+    fileName: "interview_recording.mp3",
+    mimeType: "audio/mpeg",
+    sizeBytes: 5872010,
+    senderName: "Candidate Alpha",
+    receivedAt: new Date(Date.now() - 25000000).toISOString(),
+    status: "pending",
+    tag: "Interview"
+  }
+];
+
 let mockSettings: Settings = {
   sharedAccountPhone: "+86 188 **** 8888",
   sharedAccountStatus: "connected",
@@ -315,7 +383,9 @@ export const mockApiClient: ApiClient = {
       direction: "outgoing",
       text: request.text,
       entities: request.entities || [],
-      sentByInternalUser: mockInternalUser,
+      sentByInternalUser: request.sentByAccessKeyName
+        ? { id: "user_key", displayName: request.sentByAccessKeyName }
+        : mockInternalUser,
       status: "pending",
       createdAt: new Date().toISOString(),
       replyToMessageId: request.replyToMessageId,
@@ -418,6 +488,24 @@ export const mockApiClient: ApiClient = {
       eventListeners.delete(onEvent);
     };
   },
+
+  async getWorkspaceFiles() {
+    return [...mockWorkspaceFiles];
+  },
+
+  async updateFileStatus(fileId: string, status: "pending" | "approved" | "rejected") {
+    const file = mockWorkspaceFiles.find((f) => f.id === fileId);
+    if (!file) throw new Error("File not found");
+    file.status = status;
+    return { ...file };
+  },
+
+  async updateFileTag(fileId: string, tag: string) {
+    const file = mockWorkspaceFiles.find((f) => f.id === fileId);
+    if (!file) throw new Error("File not found");
+    file.tag = tag;
+    return { ...file };
+  }
 };
 
 // --- SIMULATION TRIGGERS ---
@@ -664,4 +752,41 @@ export function simulateConnectionStatusToggle() {
       clearInterval(interval);
     }
   }, 1000);
+}
+
+// 7. Simulates an incoming file in the workspace
+export function simulateIncomingFileEvent(botId: string) {
+  const fileId = `file_sim_${Date.now()}`;
+  const types = [
+    { name: "Financial_Report_Q2.xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 450122, tag: "Finance" },
+    { name: "system_architecture_diagram.png", mime: "image/png", size: 2049100, tag: "Architecture", thumb: "https://picsum.photos/seed/system_diag/300/200" },
+    { name: "api_feedback_voicemail.ogg", mime: "audio/ogg", size: 98110 },
+    { name: "production_backup_error_log.txt", mime: "text/plain", size: 84091, tag: "Logs" }
+  ];
+  const chosenType = types[Math.floor(Math.random() * types.length)];
+  
+  const newFile: WorkspaceFile = {
+    id: `wf_${Date.now()}`,
+    botId,
+    messageId: `msg_${Date.now()}`,
+    fileId,
+    fileName: chosenType.name,
+    mimeType: chosenType.mime,
+    sizeBytes: chosenType.size,
+    senderName: "Simulated Customer",
+    receivedAt: new Date().toISOString(),
+    status: "pending",
+    tag: chosenType.tag,
+    thumbnailUrl: chosenType.thumb
+  };
+
+  mockWorkspaceFiles.unshift(newFile);
+
+  mockEmitEvent({
+    eventId: `ev_${Date.now()}_file_new`,
+    botId,
+    occurredAt: new Date().toISOString(),
+    type: "file.new",
+    file: { ...newFile }
+  });
 }

@@ -94,12 +94,21 @@ export type DownloadItem = {
   error?: string;
 };
 
+export type AccessKey = {
+  id: string;
+  key: string;
+  name: string;
+  createdAt: string;
+  lastLoginAt?: string;
+};
+
 export type SendMessageRequest = {
   clientRequestId: string;
   text: string;
   entities?: TelegramEntity[];
   replyToMessageId?: string;
   attachmentIds?: string[];
+  sentByAccessKeyName?: string; // key label audit trace
 };
 
 export type Settings = {
@@ -129,4 +138,20 @@ export type AppEvent =
   | (BaseEvent & { type: "download.progress"; download: DownloadItem })
   | (BaseEvent & { type: "download.ready"; download: DownloadItem })
   | (BaseEvent & { type: "download.failed"; download: DownloadItem })
+  | (BaseEvent & { type: "file.new"; file: WorkspaceFile })
   | (BaseEvent & { type: "telegram.error"; code?: string; message: string; raw?: unknown });
+
+export type WorkspaceFile = {
+  id: string;
+  botId: string;
+  messageId: string;
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  senderName: string;
+  receivedAt: string;
+  status: "pending" | "approved" | "rejected";
+  tag?: string;
+  thumbnailUrl?: string;
+};

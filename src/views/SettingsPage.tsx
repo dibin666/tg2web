@@ -1,9 +1,12 @@
 import React from "react";
 import { useApp } from "../context/AppContext";
-import { Settings, Shield, ToggleLeft, ToggleRight } from "lucide-react";
+import { Settings, Shield, ToggleLeft, ToggleRight, Key, Plus, Trash2, Copy, Check } from "lucide-react";
 
 export const SettingsPage: React.FC = () => {
-  const { settings, updateSettings, connectionStatus } = useApp();
+  const { settings, updateSettings, connectionStatus, t, accessKeys, generateAccessKey, revokeAccessKey } = useApp();
+  
+  const [newKeyName, setNewKeyName] = React.useState("");
+  const [copiedKeyId, setCopiedKeyId] = React.useState<string | null>(null);
 
   if (!settings) return null;
 
@@ -28,12 +31,12 @@ export const SettingsPage: React.FC = () => {
     >
       {/* Header */}
       <div style={{ marginBottom: "24px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px" }}>
-        <h1 style={{ fontSize: "1.2rem", fontWeight: "700", color: "white", display: "flex", alignItems: "center", gap: "8px" }}>
+        <h1 style={{ fontSize: "1.2rem", fontWeight: "700", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px" }}>
           <Settings size={20} style={{ color: "var(--accent-blue)" }} />
-          <span>Portal Settings & Gateway Status</span>
+          <span>{t("settingsTitle")}</span>
         </h1>
         <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "6px", lineHeight: "1.4" }}>
-          Configure connection endpoints, database message retention policies, and monitor TDLib subsystem status.
+          {t("settingsDesc")}
         </p>
       </div>
 
@@ -49,23 +52,23 @@ export const SettingsPage: React.FC = () => {
               padding: "16px",
             }}
           >
-            <h3 style={{ fontSize: "0.85rem", fontWeight: "700", color: "white", marginBottom: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
-              TDLIB CONTROLLER STATUS
+            <h3 style={{ fontSize: "0.85rem", fontWeight: "700", color: "var(--text-primary)", marginBottom: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
+              {t("tdlibStatus")}
             </h3>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "0.8rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-secondary)" }}>Process Status:</span>
+                <span style={{ color: "var(--text-secondary)" }}>{t("processStatus")}</span>
                 <span style={{ color: "var(--accent-green)", fontWeight: "bold" }}>RUNNING (PID: 8840)</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-secondary)" }}>WebSocket Gateway:</span>
+                <span style={{ color: "var(--text-secondary)" }}>{t("websocketGateway")}</span>
                 <span style={{ color: connectionStatus === "connected" ? "var(--accent-green)" : "var(--accent-red)", fontWeight: "bold" }}>
                   {connectionStatus.toUpperCase()}
                 </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-secondary)" }}>Shared Phone:</span>
-                <span style={{ fontFamily: "var(--font-mono)", color: "white" }}>{settings.sharedAccountPhone}</span>
+                <span style={{ color: "var(--text-secondary)" }}>{t("sharedPhone")}</span>
+                <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>{settings.sharedAccountPhone}</span>
               </div>
             </div>
           </div>
@@ -79,11 +82,11 @@ export const SettingsPage: React.FC = () => {
               padding: "16px",
             }}
           >
-            <h3 style={{ fontSize: "0.85rem", fontWeight: "700", color: "white", marginBottom: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
-              TELEGRAM API CREDENTIALS
+            <h3 style={{ fontSize: "0.85rem", fontWeight: "700", color: "var(--text-primary)", marginBottom: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
+              {t("tgApiCredentials")}
             </h3>
             <div className="settings-group">
-              <label>API ID (Telegram app-developer console)</label>
+              <label>{t("apiIdDesc")}</label>
               <input
                 type="text"
                 disabled
@@ -93,7 +96,7 @@ export const SettingsPage: React.FC = () => {
               />
             </div>
             <div className="settings-group" style={{ marginBottom: "0" }}>
-              <label>API Hash (Protected Secret Key)</label>
+              <label>{t("apiHashDesc")}</label>
               <input
                 type="password"
                 disabled
@@ -103,7 +106,7 @@ export const SettingsPage: React.FC = () => {
               />
             </div>
             <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "8px", display: "block" }}>
-              * Secrets are configured via backend environment parameters. Editing is locked.
+              {t("secretsNotice")}
             </span>
           </div>
         </div>
@@ -126,7 +129,7 @@ export const SettingsPage: React.FC = () => {
           >
             <Shield size={20} style={{ color: "var(--accent-yellow)", flexShrink: 0 }} />
             <div>
-              <strong>Audit Policy Alert</strong>: This portal provides shared team-wide access to client conversations. All outgoing commands are audited with internal user stamps. Do not share login invite credentials outside your authorized ops team.
+              <strong>{t("auditPolicyAlert")}</strong>: {t("auditPolicyDesc")}
             </div>
           </div>
 
@@ -139,28 +142,28 @@ export const SettingsPage: React.FC = () => {
               padding: "16px",
             }}
           >
-            <h3 style={{ fontSize: "0.85rem", fontWeight: "700", color: "white", marginBottom: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
-              DATA RETENTION POLICIES
+            <h3 style={{ fontSize: "0.85rem", fontWeight: "700", color: "var(--text-primary)", marginBottom: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
+              {t("dataRetentionPolicies")}
             </h3>
             <div className="settings-group">
-              <label>Database Message Retention Period</label>
+              <label>{t("dbRetentionPeriod")}</label>
               <select
                 value={settings.retentionDays}
                 onChange={handleRetentionChange}
                 className="settings-input"
                 style={{ cursor: "pointer", appearance: "auto" }}
               >
-                <option value={7}>7 Days (Compliance strict)</option>
-                <option value={30}>30 Days (Standard default)</option>
-                <option value={90}>90 Days (Extended cache)</option>
-                <option value={0}>Permanent (Audit history)</option>
+                <option value={7}>{t("retention7Days")}</option>
+                <option value={30}>{t("retention30Days")}</option>
+                <option value={90}>{t("retention90Days")}</option>
+                <option value={0}>{t("retentionPermanent")}</option>
               </select>
             </div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "16px" }}>
               <div>
-                <div style={{ fontSize: "0.8rem", color: "white", fontWeight: "600" }}>Local File Caching</div>
+                <div style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: "600" }}>{t("localFileCaching")}</div>
                 <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "2px" }}>
-                  Store downloads locally on server disk
+                  {t("storeDownloadsLocally")}
                 </div>
               </div>
               <span style={{ color: "var(--accent-green)", display: "flex" }}>
@@ -178,14 +181,14 @@ export const SettingsPage: React.FC = () => {
               padding: "16px",
             }}
           >
-            <h3 style={{ fontSize: "0.85rem", fontWeight: "700", color: "white", marginBottom: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
-              DEVELOPER OPTIONS
+            <h3 style={{ fontSize: "0.85rem", fontWeight: "700", color: "var(--text-primary)", marginBottom: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
+              {t("developerOptions")}
             </h3>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
-                <div style={{ fontSize: "0.8rem", color: "white", fontWeight: "600" }}>Developer Debug Mode</div>
+                <div style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: "600" }}>{t("devDebugMode")}</div>
                 <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "2px" }}>
-                  Exposes WebSocket simulator decks and log feeds
+                  {t("exposesDecksLogs")}
                 </div>
               </div>
               <button onClick={toggleDebug} style={{ color: settings.debugMode ? "var(--accent-blue)" : "var(--text-muted)", cursor: "pointer", display: "flex" }}>
@@ -196,11 +199,176 @@ export const SettingsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* User Access Keys Management */}
+      <div
+        style={{
+          marginTop: "24px",
+          backgroundColor: "var(--bg-sidebar)",
+          border: "1px solid var(--border-color)",
+          borderRadius: "8px",
+          padding: "20px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "16px",
+        }}
+      >
+        <h3 style={{ fontSize: "0.9rem", fontWeight: "700", color: "var(--text-primary)", borderBottom: "1px solid var(--border-color)", paddingBottom: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+          <Key size={18} style={{ color: "var(--accent-blue)" }} />
+          <span>{t("keyMgmtTitle")}</span>
+        </h3>
+
+        {/* Generate Key Form */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (newKeyName.trim()) {
+              generateAccessKey(newKeyName.trim());
+              setNewKeyName("");
+            }
+          }}
+          style={{
+            display: "flex",
+            gap: "12px",
+            alignItems: "center",
+          }}
+        >
+          <input
+            type="text"
+            placeholder={t("keyNamePlaceholder")}
+            value={newKeyName}
+            onChange={(e) => setNewKeyName(e.target.value)}
+            className="settings-input"
+            style={{
+              flex: 1,
+              maxWidth: "400px",
+              margin: 0,
+            }}
+          />
+          <button
+            type="submit"
+            disabled={!newKeyName.trim()}
+            style={{
+              backgroundColor: newKeyName.trim() ? "var(--accent-blue)" : "var(--text-muted)",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 16px",
+              fontSize: "0.8rem",
+              fontWeight: "600",
+              cursor: newKeyName.trim() ? "pointer" : "not-allowed",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              transition: "background-color 0.2s",
+            }}
+          >
+            <Plus size={16} />
+            <span>{t("generateKeyBtn")}</span>
+          </button>
+        </form>
+
+        {/* Access Keys Table */}
+        {accessKeys.length === 0 ? (
+          <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", padding: "16px 0" }}>
+            No access keys generated.
+          </div>
+        ) : (
+          <div
+            style={{
+              borderRadius: "6px",
+              border: "1px solid var(--border-color)",
+              overflow: "hidden",
+            }}
+          >
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
+                  <th style={{ padding: "10px 14px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
+                    {t("colKeyName")}
+                  </th>
+                  <th style={{ padding: "10px 14px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
+                    {t("colKeySecret")}
+                  </th>
+                  <th style={{ padding: "10px 14px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
+                    {t("colLastLogin")}
+                  </th>
+                  <th style={{ padding: "10px 14px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc", textAlign: "right" }}>
+                    {t("revokeBtn")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {accessKeys.map((keyObj) => (
+                  <tr
+                    key={keyObj.id}
+                    style={{ borderBottom: "1px solid var(--border-color)", transition: "background-color 0.15s ease" }}
+                    className="table-row-hover"
+                  >
+                    <td style={{ padding: "10px 14px", fontSize: "0.8rem", fontWeight: "600", color: "var(--text-primary)" }}>
+                      {keyObj.name}
+                    </td>
+                    <td style={{ padding: "10px 14px", fontSize: "0.8rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)", backgroundColor: "rgba(0,0,0,0.03)", padding: "2px 6px", borderRadius: "4px" }}>
+                          {keyObj.key}
+                        </span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(keyObj.key);
+                            setCopiedKeyId(keyObj.id);
+                            setTimeout(() => setCopiedKeyId(null), 2000);
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: "4px",
+                            cursor: "pointer",
+                            color: copiedKeyId === keyObj.id ? "var(--accent-green)" : "var(--text-muted)",
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                          title="Copy key"
+                        >
+                          {copiedKeyId === keyObj.id ? <Check size={14} /> : <Copy size={14} />}
+                        </button>
+                      </div>
+                    </td>
+                    <td style={{ padding: "10px 14px", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+                      {keyObj.lastLoginAt ? new Date(keyObj.lastLoginAt).toLocaleString() : t("neverLogin")}
+                    </td>
+                    <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                      <button
+                        onClick={() => revokeAccessKey(keyObj.id)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          color: "var(--accent-red)",
+                          padding: "4px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                        }}
+                        title="Revoke Access Key"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <style>{`
         @media (max-width: 768px) {
           .settings-grid {
             grid-template-columns: 1fr !important;
           }
+        }
+        .table-row-hover:hover td {
+          background-color: #f8fafc !important;
         }
       `}</style>
     </div>
