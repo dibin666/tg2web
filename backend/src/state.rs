@@ -23,8 +23,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use std::{
+    cmp::Reverse,
     collections::{HashMap, HashSet, VecDeque},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -44,6 +45,12 @@ pub struct AppState {
     runtime: Arc<RwLock<RuntimeState>>,
     events: broadcast::Sender<AppEvent>,
     event_log: Arc<Mutex<VecDeque<AppEvent>>>,
+}
+
+#[derive(Debug, Default)]
+struct DirectoryContents {
+    files: Vec<(PathBuf, u64)>,
+    dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3999,33 +4006,6 @@ impl AppState {
     }
 
     pub async fn clear_download_cache(&self) -> AppResult<ClearDownloadCacheResponse> {
-        let mut removed_files = 0_u64;
-        let mut removed_bytes = 0_u64;
-
-        match tokio::fs::read_dir(&self.config.media_cache_path).await {
-            Ok(mut entries) => {
-                while let Some(entry) = entries.next_entry().await? {
-                    let file_type = entry.file_type().await?;
-                    if !file_type.is_file() {
-                        continue;
-                    }
-
-                    let size = entry
-                        .metadata()
-                        .await
-                        .map(|metadata| metadata.len())
-                        .unwrap_or(0);
-                    tokio::fs::remove_file(entry.path()).await?;
-                    removed_files += 1;
-                    removed_bytes += size;
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                tokio::fs::create_dir_all(&self.config.media_cache_path).await?;
-            }
-            Err(error) => return Err(error.into()),
-        }
-
         let rows = sqlx::query(
             "SELECT id, file_id, message_id, file_name, mime_type, size_bytes, downloaded_bytes, status, error \
              FROM downloads ORDER BY updated_at DESC, created_at DESC",
@@ -4036,6 +4016,13 @@ impl AppState {
             .into_iter()
             .map(download_from_row)
             .collect::<AppResult<Vec<_>>>()?;
+
+        for download in &removed_downloads {
+            self.cancel_tdlib_download(&download.file_id).await;
+        }
+
+        let (removed_files, removed_bytes) =
+            remove_directory_contents(&self.config.media_cache_path).await?;
 
         sqlx::query("DELETE FROM downloads")
             .execute(&self.db)
@@ -4173,6 +4160,7 @@ impl AppState {
         let file_id = file_id.trim();
         let mut removed_files = 0_u64;
         let mut removed_bytes = 0_u64;
+        self.cancel_tdlib_download(file_id).await;
         let path = self.cached_file_path(file_id);
         match tokio::fs::metadata(&path).await {
             Ok(metadata) => {
@@ -4230,29 +4218,9 @@ impl AppState {
     }
 
     async fn media_cache_totals(&self) -> AppResult<(u64, u64)> {
-        let mut files = 0_u64;
-        let mut bytes = 0_u64;
-        match tokio::fs::read_dir(&self.config.media_cache_path).await {
-            Ok(mut entries) => {
-                while let Some(entry) = entries.next_entry().await? {
-                    let file_type = entry.file_type().await?;
-                    if !file_type.is_file() {
-                        continue;
-                    }
-                    files += 1;
-                    bytes += entry
-                        .metadata()
-                        .await
-                        .map(|metadata| metadata.len())
-                        .unwrap_or(0);
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                tokio::fs::create_dir_all(&self.config.media_cache_path).await?;
-            }
-            Err(error) => return Err(error.into()),
-        }
-
+        let contents = collect_directory_contents(&self.config.media_cache_path).await?;
+        let files = contents.files.len() as u64;
+        let bytes = contents.files.into_iter().map(|(_, size)| size).sum();
         Ok((files, bytes))
     }
 
@@ -4482,6 +4450,84 @@ impl AppState {
 struct MessageVisibilityOwner {
     owner_id: Option<String>,
     user: Option<InternalUser>,
+}
+
+async fn collect_directory_contents(root: &Path) -> AppResult<DirectoryContents> {
+    match tokio::fs::metadata(root).await {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("media cache path is not a directory: {}", root.display()),
+            )
+            .into());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tokio::fs::create_dir_all(root).await?;
+            return Ok(DirectoryContents::default());
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    let mut contents = DirectoryContents::default();
+    let mut pending_dirs = vec![root.to_path_buf()];
+
+    while let Some(dir) = pending_dirs.pop() {
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let file_type = entry.file_type().await?;
+            if file_type.is_dir() {
+                pending_dirs.push(path.clone());
+                contents.dirs.push(path);
+            } else if file_type.is_file() || file_type.is_symlink() {
+                let size = entry
+                    .metadata()
+                    .await
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0);
+                contents.files.push((path, size));
+            }
+        }
+    }
+
+    Ok(contents)
+}
+
+async fn remove_directory_contents(root: &Path) -> AppResult<(u64, u64)> {
+    let mut contents = collect_directory_contents(root).await?;
+    let mut removed_files = 0_u64;
+    let mut removed_bytes = 0_u64;
+
+    for (path, size) in contents.files {
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => {
+                removed_files += 1;
+                removed_bytes += size;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    contents
+        .dirs
+        .sort_by_key(|path| Reverse(path.components().count()));
+    for dir in contents.dirs {
+        match tokio::fs::remove_dir(&dir).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    tokio::fs::create_dir_all(root).await?;
+    Ok((removed_files, removed_bytes))
 }
 
 fn message_visible_to_session(message: &ChatMessage, session: &AuthSession) -> bool {
@@ -6733,14 +6779,33 @@ mod tests {
         tokio::fs::write(&cache_path, b"ready")
             .await
             .expect("cached file");
+        let tdlib_cache_dir = state
+            .config
+            .media_cache_path
+            .join("tdlib-files")
+            .join("nested");
+        tokio::fs::create_dir_all(&tdlib_cache_dir)
+            .await
+            .expect("tdlib cache dir");
+        let tdlib_cache_path = tdlib_cache_dir.join("telegram-source.bin");
+        tokio::fs::write(&tdlib_cache_path, b"tdlib source")
+            .await
+            .expect("tdlib source cache");
+
+        let summary = state
+            .download_cache_summary()
+            .await
+            .expect("summary before clear");
+        assert_eq!(summary.total_cached_files, 2);
+        assert_eq!(summary.total_cached_bytes, 17);
 
         let result = state
             .clear_download_cache()
             .await
             .expect("clear download cache");
 
-        assert_eq!(result.removed_files, 1);
-        assert_eq!(result.removed_bytes, 5);
+        assert_eq!(result.removed_files, 2);
+        assert_eq!(result.removed_bytes, 17);
         assert_eq!(result.removed_downloads, 1);
         assert_eq!(result.expired_downloads, 0);
         assert!(matches!(
@@ -6749,6 +6814,12 @@ mod tests {
         ));
         assert!(state.downloads().await.is_empty());
         assert!(tokio::fs::metadata(cache_path).await.is_err());
+        assert!(tokio::fs::metadata(tdlib_cache_path).await.is_err());
+        assert!(tokio::fs::metadata(tdlib_cache_dir).await.is_err());
+        assert!(tokio::fs::metadata(&state.config.media_cache_path)
+            .await
+            .expect("media cache root")
+            .is_dir());
         assert!(state.replay_events(None, None).iter().any(|event| matches!(
             event,
             AppEvent::DownloadDeleted {
