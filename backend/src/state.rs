@@ -490,6 +490,15 @@ impl AppState {
                     false
                 }
             }
+            AppEvent::DownloadDeleted { message_id, .. } => {
+                if let Some(message_id) = message_id.as_deref() {
+                    self.message_id_visible_to_session(event.bot_id(), message_id, session)
+                        .await
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
             AppEvent::FileNew { file, .. } => self
                 .message_id_visible_to_session(Some(&file.bot_id), &file.message_id, session)
                 .await
@@ -1291,6 +1300,13 @@ impl AppState {
         let Some(extra) = non_empty_string(response.get("@extra")) else {
             return Ok(());
         };
+        if extra.starts_with("search:") {
+            if let Some(chat) = discovered_chat_from_tdjson_chat(&response) {
+                self.upsert_discovered_chat(chat).await?;
+            }
+            return Ok(());
+        }
+
         let Some(bot_id) = extra.strip_prefix("bot_commands_chat:") else {
             return Ok(());
         };
@@ -1387,6 +1403,9 @@ impl AppState {
         let Some(file_id) = tdjson_id_to_string(file.get("id")) else {
             return Ok(());
         };
+        if !self.download_exists_for_file(&file_id).await? {
+            return Ok(());
+        }
 
         let completed = file
             .get("local")
@@ -1461,6 +1480,15 @@ impl AppState {
         self.refresh_and_emit_downloads_for_file(&file_id).await?;
 
         Ok(())
+    }
+
+    async fn download_exists_for_file(&self, file_id: &str) -> AppResult<bool> {
+        let exists = sqlx::query("SELECT 1 FROM downloads WHERE file_id = ? LIMIT 1")
+            .bind(file_id)
+            .fetch_optional(&self.db)
+            .await?
+            .is_some();
+        Ok(exists)
     }
 
     async fn refresh_and_emit_downloads_for_file(&self, file_id: &str) -> AppResult<()> {
@@ -3961,47 +3989,34 @@ impl AppState {
             Err(error) => return Err(error.into()),
         }
 
-        let now = now_rfc3339();
-        let expired_downloads = sqlx::query(
-            "UPDATE downloads SET status = 'expired', downloaded_bytes = 0, error = NULL, updated_at = ? \
-             WHERE status = 'ready'",
-        )
-        .bind(&now)
-        .execute(&self.db)
-        .await?
-        .rows_affected();
-
         let rows = sqlx::query(
             "SELECT id, file_id, message_id, file_name, mime_type, size_bytes, downloaded_bytes, status, error \
              FROM downloads ORDER BY updated_at DESC, created_at DESC",
         )
         .fetch_all(&self.db)
         .await?;
-        let downloads = rows
+        let removed_downloads = rows
             .into_iter()
             .map(download_from_row)
             .collect::<AppResult<Vec<_>>>()?;
 
+        sqlx::query("DELETE FROM downloads")
+            .execute(&self.db)
+            .await?;
+
         {
             let mut runtime = self.runtime.write().await;
-            runtime.downloads = downloads.clone();
+            runtime.downloads.clear();
         }
 
-        for download in downloads
-            .into_iter()
-            .filter(|download| download.status == DownloadStatus::Expired)
-        {
-            let bot_id = self
-                .message_bot_id(download.message_id.as_deref())
-                .await?
-                .or_else(|| self.bot_id_for_file(&download.file_id));
-            self.emit(download_event_for_item(download, bot_id));
-        }
+        self.emit_download_deleted_events(removed_downloads.clone())
+            .await?;
 
         Ok(ClearDownloadCacheResponse {
             removed_files,
             removed_bytes,
-            expired_downloads,
+            removed_downloads: removed_downloads.len() as u64,
+            expired_downloads: 0,
         })
     }
 
@@ -4132,17 +4147,6 @@ impl AppState {
             Err(error) => return Err(error.into()),
         }
 
-        let now = now_rfc3339();
-        let expired_downloads = sqlx::query(
-            "UPDATE downloads SET status = 'expired', downloaded_bytes = 0, error = NULL, updated_at = ? \
-             WHERE file_id = ? AND status = 'ready'",
-        )
-        .bind(&now)
-        .bind(file_id)
-        .execute(&self.db)
-        .await?
-        .rows_affected();
-
         let rows = sqlx::query(
             "SELECT id, file_id, message_id, file_name, mime_type, size_bytes, downloaded_bytes, status, error \
              FROM downloads WHERE file_id = ?",
@@ -4155,35 +4159,37 @@ impl AppState {
             .map(download_from_row)
             .collect::<AppResult<Vec<_>>>()?;
 
+        sqlx::query("DELETE FROM downloads WHERE file_id = ?")
+            .bind(file_id)
+            .execute(&self.db)
+            .await?;
+
         {
             let mut runtime = self.runtime.write().await;
-            for updated in &refreshed {
-                if let Some(existing) = runtime
-                    .downloads
-                    .iter_mut()
-                    .find(|download| download.id == updated.id)
-                {
-                    *existing = updated.clone();
-                }
-            }
+            runtime
+                .downloads
+                .retain(|download| download.file_id != file_id);
         }
 
-        for download in refreshed
-            .into_iter()
-            .filter(|download| download.status == DownloadStatus::Expired)
-        {
-            let bot_id = self
-                .message_bot_id(download.message_id.as_deref())
-                .await?
-                .or_else(|| self.bot_id_for_file(&download.file_id));
-            self.emit(download_event_for_item(download, bot_id));
-        }
+        self.emit_download_deleted_events(refreshed.clone()).await?;
 
         Ok(ClearDownloadCacheResponse {
             removed_files,
             removed_bytes,
-            expired_downloads,
+            removed_downloads: refreshed.len() as u64,
+            expired_downloads: 0,
         })
+    }
+
+    async fn emit_download_deleted_events(&self, downloads: Vec<DownloadItem>) -> AppResult<()> {
+        for download in downloads {
+            let bot_id = self
+                .message_bot_id(download.message_id.as_deref())
+                .await?
+                .or_else(|| self.bot_id_for_file(&download.file_id));
+            self.emit(download_deleted_event(download, bot_id));
+        }
+        Ok(())
     }
 
     async fn media_cache_totals(&self) -> AppResult<(u64, u64)> {
@@ -4723,6 +4729,17 @@ fn download_event_for_item(download: DownloadItem, bot_id: Option<String>) -> Ap
     }
 }
 
+fn download_deleted_event(download: DownloadItem, bot_id: Option<String>) -> AppEvent {
+    AppEvent::DownloadDeleted {
+        event_id: new_event_id(),
+        bot_id,
+        occurred_at: now_rfc3339(),
+        download_id: download.id,
+        file_id: download.file_id,
+        message_id: download.message_id,
+    }
+}
+
 fn parse_optional_json<T>(value: Option<&str>) -> AppResult<Option<T>>
 where
     T: serde::de::DeserializeOwned,
@@ -4769,7 +4786,10 @@ fn tdjson_value_type(value: &Value) -> Option<&str> {
 }
 
 fn discovered_chat_from_tdjson_chat_update(update: &Value) -> Option<DiscoveredTelegramChat> {
-    let chat = update.get("chat")?;
+    discovered_chat_from_tdjson_chat(update.get("chat")?)
+}
+
+fn discovered_chat_from_tdjson_chat(chat: &Value) -> Option<DiscoveredTelegramChat> {
     let telegram_chat_id = tdjson_id_to_string(chat.get("id"))?;
     let title = non_empty_string(chat.get("title"))
         .or_else(|| tdjson_username(chat))
@@ -5931,6 +5951,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tdjson_search_chat_response_updates_discovered_chats() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(AppConfig::for_test(dir.path()))
+            .await
+            .expect("state");
+
+        state
+            .apply_tdjson_response(json!({
+                "@type": "chat",
+                "@extra": "search:examplebot",
+                "id": 555666,
+                "title": "Example Bot",
+                "type": {
+                    "@type": "chatTypePrivate",
+                    "user_id": 555666
+                },
+                "username": "examplebot"
+            }))
+            .await
+            .expect("search chat response");
+
+        let chats = state
+            .list_discovered_chats(Some("examplebot".to_string()))
+            .await;
+        assert_eq!(chats.len(), 1);
+        assert_eq!(chats[0].telegram_chat_id, "555666");
+        assert_eq!(chats[0].username.as_deref(), Some("examplebot"));
+        assert_eq!(chats[0].title, "Example Bot");
+    }
+
+    #[tokio::test]
     async fn telegram_credentials_persist_without_exposing_secret() {
         let dir = tempfile::tempdir().expect("tempdir");
         let config = AppConfig::for_test(dir.path());
@@ -6589,7 +6640,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn clear_download_cache_removes_proxy_files_and_expires_ready_downloads() {
+    async fn clear_download_cache_removes_proxy_files_and_download_records() {
         let dir = tempfile::tempdir().expect("tempdir");
         let config = AppConfig::for_test(dir.path());
         let db = storage::connect(&config.database_path).await.expect("db");
@@ -6616,14 +6667,25 @@ mod tests {
             .clear_download_cache()
             .await
             .expect("clear download cache");
-        let expired = state.download("download_ready").await.expect("expired row");
 
         assert_eq!(result.removed_files, 1);
         assert_eq!(result.removed_bytes, 5);
-        assert_eq!(result.expired_downloads, 1);
-        assert_eq!(expired.status, DownloadStatus::Expired);
-        assert!(expired.proxy_url.is_none());
+        assert_eq!(result.removed_downloads, 1);
+        assert_eq!(result.expired_downloads, 0);
+        assert!(matches!(
+            state.download("download_ready").await,
+            Err(AppError::NotFound { .. })
+        ));
+        assert!(state.downloads().await.is_empty());
         assert!(tokio::fs::metadata(cache_path).await.is_err());
+        assert!(state.replay_events(None, None).iter().any(|event| matches!(
+            event,
+            AppEvent::DownloadDeleted {
+                download_id,
+                file_id,
+                ..
+            } if download_id == "download_ready" && file_id == "ready_file"
+        )));
     }
 
     #[tokio::test]
@@ -6703,7 +6765,11 @@ mod tests {
             .expect("cache item after clear");
         assert!(!item.server_file_exists);
         assert_eq!(item.file_name.as_deref(), Some("album.zip"));
-        assert_eq!(item.status, Some(DownloadStatus::Expired));
+        assert_eq!(item.status, None);
+        assert!(matches!(
+            state.download(&download.id).await,
+            Err(AppError::NotFound { .. })
+        ));
 
         let tdlib_file_path = _dir.path().join("photo-redownload.jpg");
         tokio::fs::write(&tdlib_file_path, b"redownloaded")
@@ -6724,15 +6790,28 @@ mod tests {
             }))
             .await
             .expect("file response");
-        let ready = state.download(&download.id).await.expect("ready again");
-        assert_eq!(ready.status, DownloadStatus::Ready);
-        assert_eq!(ready.downloaded_bytes, 12);
+        assert!(matches!(
+            state.download(&download.id).await,
+            Err(AppError::NotFound { .. })
+        ));
+        assert!(matches!(
+            state.cached_file_bytes("123456").await,
+            Err(AppError::NotFound { .. })
+        ));
         assert_eq!(
             state
-                .cached_file_bytes("123456")
-                .await
-                .expect("cached after response"),
-            b"redownloaded"
+                .replay_events(None, None)
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    AppEvent::DownloadDeleted {
+                        download_id,
+                        file_id,
+                        ..
+                    } if download_id == &download.id && file_id == "123456"
+                ))
+                .count(),
+            1
         );
 
         let files = state.workspace_files().await;

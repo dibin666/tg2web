@@ -80,6 +80,38 @@ const formatStatusTime = (value?: string) => {
   return date.toLocaleString();
 };
 
+const normalizeBotSearchQuery = (value: string) => value.trim().replace(/^@+/, "").toLowerCase();
+
+const searchableBotText = (...values: Array<string | undefined>) =>
+  values
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+
+const publishedBotMatchesSearch = (bot: PublishedBot, query: string) => {
+  if (!query) return true;
+  return searchableBotText(bot.displayTitle, bot.title, bot.username, bot.telegramChatId).includes(query);
+};
+
+const discoveredChatMatchesSearch = (chat: DiscoveredTelegramChat, query: string) => {
+  if (!query) return true;
+  return searchableBotText(chat.title, chat.username, chat.telegramChatId).includes(query);
+};
+
+const upsertDiscoveredChat = (chats: DiscoveredTelegramChat[], incoming: DiscoveredTelegramChat) => {
+  const next = [
+    incoming,
+    ...chats.filter((chat) => chat.telegramChatId !== incoming.telegramChatId),
+  ];
+  return next.sort((left, right) =>
+    Number(right.isBot) - Number(left.isBot)
+    || left.title.localeCompare(right.title, undefined, { sensitivity: "base" })
+  );
+};
+
+const isDiscoveryPendingError = (error: unknown) =>
+  error instanceof Error && error.message.includes("username search was submitted");
+
 export const SettingsPage: React.FC = () => {
   const { settings, updateSettings, connectionStatus, t } = useApp();
   const [activeTab, setActiveTab] = React.useState<"telegram" | "bots" | "security" | "system">("telegram");
@@ -173,6 +205,36 @@ export const SettingsPage: React.FC = () => {
     );
   };
 
+  const handleSearchTelegramUsername = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const query = username.trim();
+    if (!query) return;
+
+    try {
+      setBusy(true);
+      setNotice(null);
+      let discoveryPending = false;
+
+      try {
+        const chat = await adminApiClient.searchTelegramUsername(query);
+        setDiscoveredChats((prev) => upsertDiscoveredChat(prev, chat));
+      } catch (error) {
+        if (!isDiscoveryPendingError(error)) {
+          throw error;
+        }
+        discoveryPending = true;
+        await new Promise((resolve) => window.setTimeout(resolve, 700));
+      }
+
+      await refreshAdminState();
+      setNotice(discoveryPending ? "已提交 Telegram 搜索请求，发现结果会刷新到下方列表。" : "搜索完成。");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleCopyAccessKey = async (secret: string) => {
     try {
       await copyTextToClipboard(secret);
@@ -198,15 +260,18 @@ export const SettingsPage: React.FC = () => {
     : telegramStatus?.accountLabel
       || telegramStatus?.accountPhone
       || (statusValue === "ready" ? t("telegramAccountSyncing") : t("telegramAccountMissing"));
-  const publishedPageCount = Math.max(1, Math.ceil(publishedBots.length / BOT_LIST_PAGE_SIZE));
-  const discoveredPageCount = Math.max(1, Math.ceil(discoveredChats.length / BOT_LIST_PAGE_SIZE));
+  const botSearchQuery = normalizeBotSearchQuery(username);
+  const filteredPublishedBots = publishedBots.filter((bot) => publishedBotMatchesSearch(bot, botSearchQuery));
+  const filteredDiscoveredChats = discoveredChats.filter((chat) => discoveredChatMatchesSearch(chat, botSearchQuery));
+  const publishedPageCount = Math.max(1, Math.ceil(filteredPublishedBots.length / BOT_LIST_PAGE_SIZE));
+  const discoveredPageCount = Math.max(1, Math.ceil(filteredDiscoveredChats.length / BOT_LIST_PAGE_SIZE));
   const currentPublishedPage = Math.min(publishedPage, publishedPageCount);
   const currentDiscoveredPage = Math.min(discoveredPage, discoveredPageCount);
-  const pagedPublishedBots = publishedBots.slice(
+  const pagedPublishedBots = filteredPublishedBots.slice(
     (currentPublishedPage - 1) * BOT_LIST_PAGE_SIZE,
     currentPublishedPage * BOT_LIST_PAGE_SIZE
   );
-  const pagedDiscoveredChats = discoveredChats.slice(
+  const pagedDiscoveredChats = filteredDiscoveredChats.slice(
     (currentDiscoveredPage - 1) * BOT_LIST_PAGE_SIZE,
     currentDiscoveredPage * BOT_LIST_PAGE_SIZE
   );
@@ -498,7 +563,7 @@ export const SettingsPage: React.FC = () => {
           {activeTab === "bots" && (
             <section className="settings-card">
               <div className="settings-card-title">Published Bot Chats</div>
-              <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+              <form onSubmit={handleSearchTelegramUsername} style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
                 <input
                   id="telegram-bot-username"
                   name="telegram-bot-username"
@@ -510,16 +575,19 @@ export const SettingsPage: React.FC = () => {
                   style={{ margin: 0 }}
                 />
                 <button
+                  type="submit"
                   className="btn-secondary"
                   disabled={busy || !username.trim()}
-                  onClick={() => runAdminAction(() => adminApiClient.searchTelegramUsername(username.trim()), "Username search requested.")}
+                  title="搜索 Telegram 用户名"
                 >
                   <Search size={14} />
                 </button>
-              </div>
+              </form>
               <div className="settings-list">
-                {publishedBots.length === 0 ? (
-                  <span className="settings-empty">No published bot chats.</span>
+                {filteredPublishedBots.length === 0 ? (
+                  <span className="settings-empty">
+                    {botSearchQuery ? "没有匹配的已发布机器人。" : "No published bot chats."}
+                  </span>
                 ) : (
                   pagedPublishedBots.map((bot) => (
                     <div className="settings-list-row" key={bot.id}>
@@ -538,8 +606,8 @@ export const SettingsPage: React.FC = () => {
                   ))
                 )}
               </div>
-              {renderPagination(currentPublishedPage, publishedPageCount, setPublishedPage, publishedBots.length)}
-              {discoveredChats.length > 0 && (
+              {renderPagination(currentPublishedPage, publishedPageCount, setPublishedPage, filteredPublishedBots.length)}
+              {filteredDiscoveredChats.length > 0 ? (
                 <div className="settings-list" style={{ marginTop: "12px" }}>
                   {pagedDiscoveredChats.map((chat) => (
                     <div className="settings-list-row" key={chat.telegramChatId}>
@@ -555,8 +623,14 @@ export const SettingsPage: React.FC = () => {
                       </button>
                     </div>
                   ))}
-                  {renderPagination(currentDiscoveredPage, discoveredPageCount, setDiscoveredPage, discoveredChats.length)}
+                  {renderPagination(currentDiscoveredPage, discoveredPageCount, setDiscoveredPage, filteredDiscoveredChats.length)}
                 </div>
+              ) : (
+                botSearchQuery && (
+                  <span className="settings-empty" style={{ marginTop: "12px" }}>
+                    没有匹配的可发布机器人。可点击搜索按钮向 Telegram 查询公开用户名。
+                  </span>
+                )
               )}
             </section>
           )}

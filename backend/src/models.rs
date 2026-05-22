@@ -259,6 +259,7 @@ pub struct DownloadItem {
 pub struct ClearDownloadCacheResponse {
     pub removed_files: u64,
     pub removed_bytes: u64,
+    pub removed_downloads: u64,
     pub expired_downloads: u64,
 }
 
@@ -628,6 +629,17 @@ pub enum AppEvent {
         occurred_at: String,
         download: DownloadItem,
     },
+    #[serde(rename = "download.deleted")]
+    DownloadDeleted {
+        event_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        bot_id: Option<String>,
+        occurred_at: String,
+        download_id: String,
+        file_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+    },
     #[serde(rename = "file.new")]
     FileNew {
         event_id: String,
@@ -679,6 +691,7 @@ impl AppEvent {
             | AppEvent::DownloadProgress { event_id, .. }
             | AppEvent::DownloadReady { event_id, .. }
             | AppEvent::DownloadFailed { event_id, .. }
+            | AppEvent::DownloadDeleted { event_id, .. }
             | AppEvent::FileNew { event_id, .. }
             | AppEvent::TelegramError { event_id, .. } => event_id,
         }
@@ -698,6 +711,7 @@ impl AppEvent {
             | AppEvent::DownloadProgress { bot_id, .. }
             | AppEvent::DownloadReady { bot_id, .. }
             | AppEvent::DownloadFailed { bot_id, .. }
+            | AppEvent::DownloadDeleted { bot_id, .. }
             | AppEvent::FileNew { bot_id, .. }
             | AppEvent::TelegramError { bot_id, .. } => bot_id.as_deref(),
             AppEvent::BotPublished { bot, .. } | AppEvent::BotUpdated { bot, .. } => {

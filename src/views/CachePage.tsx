@@ -80,17 +80,17 @@ export const CachePage: React.FC = () => {
   };
 
   const handleClearAll = () => {
-    const confirmed = window.confirm("确认删除服务器上的所有本地下载缓存？消息和文件记录会保留。");
+    const confirmed = window.confirm("确认删除服务器上的所有本地下载缓存和下载记录？消息和文件历史会保留。");
     if (!confirmed) return;
     void runAction("all", async () => {
       await adminApiClient.clearDownloadCache();
-    }, "已清理所有本地下载缓存。");
+    }, "已清理所有本地下载缓存和下载记录。");
   };
 
   const handleClearFile = (item: DownloadCacheItem) => {
     void runAction(`clear:${item.fileId}`, async () => {
       await adminApiClient.clearDownloadCacheFile(item.fileId);
-    }, "已清理该文件的服务器缓存。");
+    }, "已清理该文件的服务器缓存和下载记录。");
   };
 
   const handleRefetch = (item: DownloadCacheItem) => {
@@ -167,7 +167,7 @@ export const CachePage: React.FC = () => {
           <div className="settings-card-title">清理操作</div>
           <button className="btn-secondary danger-button" onClick={handleClearAll} disabled={busyKey === "all"}>
             <Trash2 size={14} />
-            一键清理全部缓存
+            一键清理缓存和下载记录
           </button>
         </section>
       </div>
@@ -233,8 +233,8 @@ export const CachePage: React.FC = () => {
                       <button
                         className="btn-cache-action danger"
                         onClick={() => handleClearFile(item)}
-                        disabled={!item.serverFileExists || busyKey === `clear:${item.fileId}`}
-                        title="清理该文件缓存"
+                        disabled={(!item.serverFileExists && !item.downloadId) || busyKey === `clear:${item.fileId}`}
+                        title="清理该文件缓存和下载记录"
                       >
                         <Trash2 size={12} />
                         <span>清理缓存</span>

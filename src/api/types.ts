@@ -103,6 +103,7 @@ export type DownloadItem = {
 export type ClearDownloadCacheResponse = {
   removedFiles: number;
   removedBytes: number;
+  removedDownloads: number;
   expiredDownloads: number;
 };
 
@@ -224,6 +225,7 @@ export type AppEvent =
   | (BaseEvent & { type: "download.progress"; download: DownloadItem })
   | (BaseEvent & { type: "download.ready"; download: DownloadItem })
   | (BaseEvent & { type: "download.failed"; download: DownloadItem })
+  | (BaseEvent & { type: "download.deleted"; downloadId: string; fileId: string; messageId?: string })
   | (BaseEvent & { type: "file.new"; file: WorkspaceFile })
   | (BaseEvent & { type: "telegram.error"; code?: string; message: string; raw?: unknown });
 

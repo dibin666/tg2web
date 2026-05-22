@@ -124,7 +124,7 @@ const translations = {
     clearDownloadCacheTitle: "本地下载缓存",
     clearDownloadCacheDesc: "删除服务器代理缓存中的已下载文件。消息记录会保留，文件可重新下载。",
     clearDownloadCacheBtn: "删除所有本地下载缓存",
-    clearDownloadCacheDone: "已删除 {files} 个缓存文件，释放 {bytes}，{downloads} 条下载记录已标记为过期。",
+    clearDownloadCacheDone: "已删除 {files} 个缓存文件，释放 {bytes}，并删除 {downloads} 条下载记录。",
     developerOptions: "开发者选项",
     devDebugMode: "开发者调试模式",
     exposesDecksLogs: "显示后端事件日志和调试状态",
@@ -248,7 +248,7 @@ const translations = {
     clearDownloadCacheTitle: "Local Download Cache",
     clearDownloadCacheDesc: "Delete downloaded files from the server proxy cache. Message history stays available and files can be downloaded again.",
     clearDownloadCacheBtn: "Delete all local download cache",
-    clearDownloadCacheDone: "Deleted {files} cached files, freed {bytes}, and marked {downloads} downloads expired.",
+    clearDownloadCacheDone: "Deleted {files} cached files, freed {bytes}, and removed {downloads} download records.",
     developerOptions: "DEVELOPER OPTIONS",
     devDebugMode: "Developer Debug Mode",
     exposesDecksLogs: "Shows backend event logs and diagnostic state",
@@ -754,6 +754,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (event.type === "download.ready") {
             console.info("Download ready", event.download.proxyUrl || event.download.fileId);
           }
+          break;
+
+        case "download.deleted":
+          setDownloads((prev) => prev.filter((download) => {
+            if (download.id === event.downloadId) return false;
+            if (download.fileId !== event.fileId) return true;
+            return Boolean(event.messageId) && (download.messageId || "") !== event.messageId;
+          }));
           break;
 
         case "file.new":
