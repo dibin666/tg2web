@@ -14,11 +14,16 @@ ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN npm run build
 
-FROM rust:1-bookworm AS backend-build
+FROM rust:1-trixie AS backend-build
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates pkg-config libssl-dev \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libc++-dev \
+        libc++abi-dev \
+        libssl-dev \
+        pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
