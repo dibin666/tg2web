@@ -26,6 +26,18 @@ const FILE_TYPE_OPTIONS: Array<{ key: FileTypeKey; label: string }> = [
   { key: "other", label: "其他" },
 ];
 
+const getFileTypeIconComponent = (key: FileTypeKey) => {
+  switch (key) {
+    case "all": return FolderOpen;
+    case "image": return ImageIcon;
+    case "archive": return Archive;
+    case "audio": return Music;
+    case "video": return Film;
+    case "document": return FileText;
+    default: return File;
+  }
+};
+
 const fileTypeFor = (mimeType: string, fileName: string): { key: Exclude<FileTypeKey, "all">; label: string } => {
   const mime = mimeType.toLowerCase();
   const name = fileName.toLowerCase();
@@ -144,16 +156,49 @@ export const WorkspacePage: React.FC = () => {
     downloads.find((download) => download.fileId === fileId && (download.messageId || "") === messageId)
     || downloads.find((download) => download.fileId === fileId);
 
-  const fileCacheLabel = (fileId: string, messageId: string) => {
+  const renderFileCacheBadge = (fileId: string, messageId: string) => {
     const download = getDownloadForFile(fileId, messageId);
-    if (!download) return "未缓存，可下载";
-    if (download.status === "ready") return "服务器已缓存";
-    if (download.status === "expired") return "缓存已清理，可重新下载";
-    if (download.status === "downloading" || download.status === "queued") return "正在下载到服务器";
-    if (download.status === "paused") return "已暂停";
-    if (download.status === "failed") return "下载失败";
-    if (download.status === "stopped") return "已停止";
-    return download.status;
+    let label = "未缓存";
+    let statusClass = "pending";
+    
+    if (download) {
+      switch (download.status) {
+        case "ready":
+          label = "服务器已缓存";
+          statusClass = "ready";
+          break;
+        case "expired":
+          label = "缓存已清理";
+          statusClass = "expired";
+          break;
+        case "downloading":
+        case "queued":
+          label = "正在下载到服务器";
+          statusClass = "downloading";
+          break;
+        case "paused":
+          label = "已暂停";
+          statusClass = "paused";
+          break;
+        case "failed":
+          label = "下载失败";
+          statusClass = "failed";
+          break;
+        case "stopped":
+          label = "已停止";
+          statusClass = "stopped";
+          break;
+        default:
+          label = download.status;
+          statusClass = "pending";
+      }
+    }
+    
+    return (
+      <span className={`status-pill ${statusClass}`} style={{ marginTop: "4px", width: "fit-content" }}>
+        {label}
+      </span>
+    );
   };
 
   return (
@@ -265,40 +310,49 @@ export const WorkspacePage: React.FC = () => {
             </select>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              backgroundColor: "var(--bg-app)",
-              border: "1px solid var(--border-color)",
-              borderRadius: "6px",
-              padding: "4px 10px",
-            }}
-          >
-            <File size={14} style={{ color: "var(--text-secondary)" }} />
-            <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>类型:</span>
-            <select
-              value={selectedFileType}
-              onChange={e => setSelectedFileType(e.target.value as FileTypeKey)}
-              style={{
-                fontSize: "0.8rem",
-                color: "var(--text-primary)",
-                fontWeight: "500",
-                cursor: "pointer",
-                padding: "2px 20px 2px 4px",
-                backgroundColor: "transparent",
-                border: "none",
-                outline: "none",
-              }}
-            >
-              {FILE_TYPE_OPTIONS.map((type) => (
-                <option key={type.key} value={type.key}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
-          </div>
+        </div>
+
+        {/* File Type Filter Pills */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            flexWrap: "wrap",
+            borderTop: "1px solid var(--border-color)",
+            paddingTop: "12px",
+          }}
+        >
+          <span style={{ fontSize: "0.8rem", fontWeight: "600", color: "var(--text-secondary)", marginRight: "4px" }}>
+            类型筛选:
+          </span>
+          {FILE_TYPE_OPTIONS.map((option) => {
+            const isActive = selectedFileType === option.key;
+            const Icon = getFileTypeIconComponent(option.key);
+            return (
+              <button
+                key={option.key}
+                onClick={() => setSelectedFileType(option.key)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "6px 12px",
+                  borderRadius: "9999px",
+                  fontSize: "0.78rem",
+                  fontWeight: "500",
+                  cursor: "pointer",
+                  border: isActive ? "1px solid var(--accent-blue)" : "1px solid var(--border-color)",
+                  backgroundColor: isActive ? "var(--accent-blue-transparent)" : "var(--bg-app)",
+                  color: isActive ? "var(--accent-blue)" : "var(--text-secondary)",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <Icon size={13} style={{ color: isActive ? "var(--accent-blue)" : "var(--text-muted)" }} />
+                <span>{option.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -403,9 +457,7 @@ export const WorkspacePage: React.FC = () => {
                             <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
                               {fileType.label} · {formatBytes(file.sizeBytes)}
                             </span>
-                            <span style={{ fontSize: "0.7rem", color: "var(--text-secondary)" }}>
-                              {fileCacheLabel(file.fileId, file.messageId)}
-                            </span>
+                            {renderFileCacheBadge(file.fileId, file.messageId)}
                           </div>
                         </div>
                       </td>

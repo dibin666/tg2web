@@ -89,6 +89,10 @@ const translations = {
     savedStatusShort: "已保存",
 
     // SettingsPage
+    settingsTabTelegram: "Telegram 连接",
+    settingsTabBots: "机器人与群组",
+    settingsTabSecurity: "安全与密钥",
+    settingsTabSystem: "系统与清理",
     tdlibStatus: "TDLib 控制器状态",
     processStatus: "进程状态:",
     websocketGateway: "WebSocket 网关:",
@@ -197,6 +201,10 @@ const translations = {
     adminPasscodeLabel: "Admin Access Passcode",
     saveSettings: "Save Configuration",
     settingsSaved: "Settings saved successfully!",
+    settingsTabTelegram: "Telegram Connection",
+    settingsTabBots: "Bot Management",
+    settingsTabSecurity: "Security & Keys",
+    settingsTabSystem: "System & Cache",
     tdlibStatus: "TDLIB CONTROLLER STATUS",
     processStatus: "Process Status:",
     websocketGateway: "WebSocket Gateway:",

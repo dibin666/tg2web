@@ -813,3 +813,208 @@ a:hover {
     max-width: 100%;
   }
 }
+
+/* Premium Download Status Badges */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.status-pill.ready {
+  background-color: var(--accent-green-transparent);
+  color: var(--accent-green);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+}
+.status-pill.downloading, .status-pill.queued {
+  background-color: var(--accent-blue-transparent);
+  color: var(--accent-blue);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+}
+.status-pill.paused {
+  background-color: var(--accent-yellow-transparent);
+  color: var(--accent-yellow);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+}
+.status-pill.failed, .status-pill.stopped {
+  background-color: var(--accent-red-transparent);
+  color: var(--accent-red);
+  border: 1px solid rgba(244, 63, 94, 0.15);
+}
+.status-pill.expired, .status-pill.pending {
+  background-color: rgba(148, 163, 184, 0.1);
+  color: var(--text-secondary);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+/* Colored Download Action Buttons */
+.btn-download-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+.btn-download-action.start {
+  background-color: var(--accent-blue-transparent);
+  color: var(--accent-blue);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+.btn-download-action.start:hover {
+  background-color: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+.btn-download-action.success {
+  background-color: var(--accent-green);
+  color: #ffffff;
+}
+.btn-download-action.success:hover {
+  background-color: #059669;
+}
+.btn-download-action.retry {
+  background-color: var(--accent-yellow-transparent);
+  color: var(--accent-yellow);
+  border-color: rgba(245, 158, 11, 0.2);
+}
+.btn-download-action.retry:hover {
+  background-color: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.btn-download-action.expired {
+  background-color: rgba(148, 163, 184, 0.1);
+  color: var(--text-secondary);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+.btn-download-action.expired:hover {
+  background-color: rgba(148, 163, 184, 0.15);
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+/* Cache Table Action Buttons */
+.btn-cache-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+.btn-cache-action.download {
+  background-color: var(--accent-blue-transparent);
+  color: var(--accent-blue);
+  border-color: rgba(59, 130, 246, 0.15);
+}
+.btn-cache-action.download:hover {
+  background-color: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+.btn-cache-action.refetch {
+  background-color: rgba(148, 163, 184, 0.08);
+  color: var(--text-secondary);
+  border-color: rgba(148, 163, 184, 0.15);
+}
+.btn-cache-action.refetch:hover {
+  background-color: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.25);
+}
+.btn-cache-action.danger {
+  background-color: var(--accent-red-transparent);
+  color: var(--accent-red);
+  border-color: rgba(244, 63, 94, 0.15);
+}
+.btn-cache-action.danger:hover {
+  background-color: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.3);
+}
+.btn-cache-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Responsive Tabbed Settings Layout */
+.settings-layout {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  gap: 24px;
+  overflow: hidden;
+  margin-top: 12px;
+}
+.settings-sidebar {
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-color);
+  padding-right: 16px;
+}
+.settings-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+.settings-tab-btn:hover {
+  background-color: rgba(148, 163, 184, 0.08);
+  color: var(--text-primary);
+}
+.settings-tab-btn.active {
+  background-color: var(--accent-blue-transparent);
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+@media (max-width: 768px) {
+  .settings-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .settings-sidebar {
+    width: 100%;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding-right: 0;
+    padding-bottom: 12px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .settings-tab-btn {
+    padding: 8px 12px;
+    font-size: 0.8rem;
+  }
+  .settings-content {
+    overflow-y: visible;
+    padding-right: 0;
+  }
+}
+

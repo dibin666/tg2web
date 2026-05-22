@@ -11,13 +11,32 @@ const formatBytes = (bytes?: number) => {
   return `${(bytes / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
 };
 
-const statusLabel = (item: DownloadCacheItem) => {
-  if (item.serverFileExists) return "服务器已缓存";
-  if (item.status === "downloading" || item.status === "queued") return "正在下载到服务器";
-  if (item.status === "paused") return "已暂停";
-  if (item.status === "failed") return "下载失败";
-  if (item.status === "expired") return "服务器缓存已清理";
-  return "未缓存";
+const renderStatusBadge = (item: DownloadCacheItem) => {
+  let label = "未缓存";
+  let statusClass = "pending";
+
+  if (item.serverFileExists) {
+    label = "服务器已缓存";
+    statusClass = "ready";
+  } else if (item.status === "downloading" || item.status === "queued") {
+    label = "正在下载到服务器";
+    statusClass = "downloading";
+  } else if (item.status === "paused") {
+    label = "已暂停";
+    statusClass = "paused";
+  } else if (item.status === "failed") {
+    label = "下载失败";
+    statusClass = "failed";
+  } else if (item.status === "expired") {
+    label = "服务器缓存已清理";
+    statusClass = "expired";
+  }
+
+  return (
+    <span className={`status-pill ${statusClass}`}>
+      {label}
+    </span>
+  );
 };
 
 export const CachePage: React.FC = () => {
@@ -184,38 +203,41 @@ export const CachePage: React.FC = () => {
                     </div>
                   </td>
                   <td>{botTitle(item.botId)}</td>
-                  <td>{statusLabel(item)}</td>
+                  <td>{renderStatusBadge(item)}</td>
                   <td>{item.serverFileExists ? formatBytes(item.cachedBytes) : "不存在"}</td>
                   <td>{formatBytes(item.sizeBytes)}</td>
                   <td>{new Date(item.updatedAt).toLocaleString()}</td>
                   <td>
-                    <div className="cache-actions">
+                    <div className="cache-actions" style={{ display: "flex", gap: "8px" }}>
                       {item.serverFileExists ? (
                         <button
-                          className="icon-button"
+                          className="btn-cache-action download"
                           onClick={() => handleBrowserDownload(item)}
                           disabled={busyKey === `browser:${item.id}`}
                           title="下载到本机"
                         >
-                          <Download size={14} />
+                          <Download size={12} />
+                          <span>下载到本机</span>
                         </button>
                       ) : (
                         <button
-                          className="icon-button"
+                          className="btn-cache-action refetch"
                           onClick={() => handleRefetch(item)}
                           disabled={busyKey === `fetch:${item.id}`}
                           title="重新下载到服务器"
                         >
-                          <RotateCcw size={14} />
+                          <RotateCcw size={12} />
+                          <span>下载到服务器</span>
                         </button>
                       )}
                       <button
-                        className="icon-button danger-button"
+                        className="btn-cache-action danger"
                         onClick={() => handleClearFile(item)}
                         disabled={!item.serverFileExists || busyKey === `clear:${item.fileId}`}
                         title="清理该文件缓存"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={12} />
+                        <span>清理缓存</span>
                       </button>
                     </div>
                   </td>
