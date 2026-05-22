@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useApp } from "../context/AppContext";
+import { downloadProxyFile } from "../api/client";
 import { DownloadProgress } from "../components/DownloadProgress";
 import { 
   Search, 
@@ -11,7 +12,8 @@ import {
   Music, 
   File,
   FolderOpen,
-  Archive
+  Archive,
+  Download
 } from "lucide-react";
 
 type FileTypeKey = "all" | "image" | "archive" | "audio" | "video" | "document" | "other";
@@ -72,11 +74,42 @@ const fileTypeFor = (mimeType: string, fileName: string): { key: Exclude<FileTyp
 };
 
 export const WorkspacePage: React.FC = () => {
-  const { workspaceFiles, bots, downloads, updateFileTag, t } = useApp();
+  const { workspaceFiles, bots, updateFileTag, t, downloads, downloadMedia } = useApp();
   
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBotId, setSelectedBotId] = useState<string>("all");
   const [selectedFileType, setSelectedFileType] = useState<FileTypeKey>("all");
+  
+  // Multi-select state
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  
+  // Track files queued for automatic local browser download once ready on the server
+  const pendingLocalDownloadsRef = React.useRef<Set<string>>(new Set());
+
+  // Effect to automatically trigger local browser download when a queued file becomes ready on the server
+  React.useEffect(() => {
+    const pending = pendingLocalDownloadsRef.current;
+    if (pending.size === 0) return;
+
+    downloads.forEach((d) => {
+      const key = `${d.fileId}:${d.messageId || ""}`;
+      const fallbackKey = `${d.fileId}:`;
+
+      if ((d.status === "ready" && d.proxyUrl) || d.status === "failed" || d.status === "stopped" || d.status === "expired") {
+        if (pending.has(key)) {
+          pending.delete(key);
+          if (d.status === "ready" && d.proxyUrl) {
+            void downloadProxyFile(d.proxyUrl, d.fileName);
+          }
+        } else if (pending.has(fallbackKey)) {
+          pending.delete(fallbackKey);
+          if (d.status === "ready" && d.proxyUrl) {
+            void downloadProxyFile(d.proxyUrl, d.fileName);
+          }
+        }
+      }
+    });
+  }, [downloads]);
   
   // Track which file tag is being edited
   const [editingTagFileId, setEditingTagFileId] = useState<string | null>(null);
@@ -103,6 +136,71 @@ export const WorkspacePage: React.FC = () => {
       return true;
     });
   }, [workspaceFiles, selectedBotId, selectedFileType, searchQuery]);
+
+  const isAllSelected = useMemo(() => {
+    return filteredFiles.length > 0 && filteredFiles.every(f => selectedFileIds.has(f.id));
+  }, [filteredFiles, selectedFileIds]);
+
+  const isSomeSelected = useMemo(() => {
+    const selectedCount = filteredFiles.filter(f => selectedFileIds.has(f.id)).length;
+    return selectedCount > 0 && selectedCount < filteredFiles.length;
+  }, [filteredFiles, selectedFileIds]);
+
+  const handleSelectAllToggle = () => {
+    if (isAllSelected) {
+      const next = new Set(selectedFileIds);
+      filteredFiles.forEach(f => next.delete(f.id));
+      setSelectedFileIds(next);
+    } else {
+      const next = new Set(selectedFileIds);
+      filteredFiles.forEach(f => next.add(f.id));
+      setSelectedFileIds(next);
+    }
+  };
+
+  const handleSelectRowToggle = (fileId: string) => {
+    const next = new Set(selectedFileIds);
+    if (next.has(fileId)) {
+      next.delete(fileId);
+    } else {
+      next.add(fileId);
+    }
+    setSelectedFileIds(next);
+  };
+
+  const handleBatchDownload = async () => {
+    const filesToDownload = workspaceFiles.filter(f => selectedFileIds.has(f.id));
+
+    for (const file of filesToDownload) {
+      const active = downloads.find(d => d.fileId === file.fileId && (d.messageId || "") === (file.messageId || ""))
+        || downloads.find(d => d.fileId === file.fileId);
+      
+      if (active && active.status === "ready" && active.proxyUrl) {
+        // Already ready: trigger local download immediately
+        try {
+          await downloadProxyFile(active.proxyUrl, active.fileName || file.fileName);
+        } catch (err) {
+          console.error(`Failed to trigger local download for ${file.fileName}`, err);
+        }
+      } else {
+        // Not ready on server: queue for automatic local download once ready
+        const key = `${file.fileId}:${file.messageId || ""}`;
+        pendingLocalDownloadsRef.current.add(key);
+
+        // If not already downloading or queued, trigger download to server
+        const isCurrentlyActive = active && (active.status === "downloading" || active.status === "queued" || active.status === "paused");
+        if (!isCurrentlyActive) {
+          try {
+            await downloadMedia(file.fileId, file.messageId, file.fileName, file.sizeBytes);
+          } catch (err) {
+            console.error(`Failed to trigger download to server for ${file.fileName}`, err);
+          }
+        }
+      }
+    }
+
+    setSelectedFileIds(new Set());
+  };
 
   // Helper to format file size
   const formatBytes = (bytes: number, decimals = 2) => {
@@ -152,54 +250,6 @@ export const WorkspacePage: React.FC = () => {
     return bot ? bot.title : `Bot [${botId}]`;
   };
 
-  const getDownloadForFile = (fileId: string, messageId: string) =>
-    downloads.find((download) => download.fileId === fileId && (download.messageId || "") === messageId)
-    || downloads.find((download) => download.fileId === fileId);
-
-  const renderFileCacheBadge = (fileId: string, messageId: string) => {
-    const download = getDownloadForFile(fileId, messageId);
-    let label = "未缓存";
-    let statusClass = "pending";
-    
-    if (download) {
-      switch (download.status) {
-        case "ready":
-          label = "服务器已缓存";
-          statusClass = "ready";
-          break;
-        case "expired":
-          label = "缓存已清理";
-          statusClass = "expired";
-          break;
-        case "downloading":
-        case "queued":
-          label = "正在下载到服务器";
-          statusClass = "downloading";
-          break;
-        case "paused":
-          label = "已暂停";
-          statusClass = "paused";
-          break;
-        case "failed":
-          label = "下载失败";
-          statusClass = "failed";
-          break;
-        case "stopped":
-          label = "已停止";
-          statusClass = "stopped";
-          break;
-        default:
-          label = download.status;
-          statusClass = "pending";
-      }
-    }
-    
-    return (
-      <span className={`status-pill ${statusClass}`} style={{ marginTop: "4px", width: "fit-content" }}>
-        {label}
-      </span>
-    );
-  };
 
   return (
     <div
@@ -402,6 +452,19 @@ export const WorkspacePage: React.FC = () => {
             <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
+                  <th style={{ width: "40px", padding: "12px 16px", backgroundColor: "#f8fafc", textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      ref={input => {
+                        if (input) {
+                          input.indeterminate = isSomeSelected;
+                        }
+                      }}
+                      onChange={handleSelectAllToggle}
+                      style={{ cursor: "pointer" }}
+                    />
+                  </th>
                   <th style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
                     {t("colFileName")}
                   </th>
@@ -430,9 +493,22 @@ export const WorkspacePage: React.FC = () => {
                   return (
                     <tr 
                       key={file.id} 
-                      style={{ borderBottom: "1px solid var(--border-color)", transition: "background-color 0.15s ease" }}
+                      style={{ 
+                        borderBottom: "1px solid var(--border-color)", 
+                        transition: "background-color 0.15s ease",
+                        backgroundColor: selectedFileIds.has(file.id) ? "var(--accent-blue-transparent)" : "transparent"
+                      }}
                       className="table-row-hover"
                     >
+                      {/* Checkbox Column */}
+                      <td style={{ padding: "12px 16px", textAlign: "center", verticalAlign: "middle" }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedFileIds.has(file.id)}
+                          onChange={() => handleSelectRowToggle(file.id)}
+                          style={{ cursor: "pointer" }}
+                        />
+                      </td>
                       {/* File Name Column */}
                       <td style={{ padding: "12px 16px", verticalAlign: "middle" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -457,7 +533,6 @@ export const WorkspacePage: React.FC = () => {
                             <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
                               {fileType.label} · {formatBytes(file.sizeBytes)}
                             </span>
-                            {renderFileCacheBadge(file.fileId, file.messageId)}
                           </div>
                         </div>
                       </td>
@@ -554,7 +629,7 @@ export const WorkspacePage: React.FC = () => {
 
                       {/* Download Status Column */}
                       <td style={{ padding: "12px 16px", verticalAlign: "middle", textAlign: "right" }}>
-                        <div style={{ display: "inline-block", textAlign: "left" }} onClick={e => e.stopPropagation()}>
+                        <div className="download-progress-col-wrap" style={{ display: "inline-block", textAlign: "left" }} onClick={e => e.stopPropagation()}>
                           <DownloadProgress
                             fileId={file.fileId}
                             fileName={file.fileName}
@@ -571,6 +646,57 @@ export const WorkspacePage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {selectedFileIds.size > 0 && (
+        <div className="batch-action-bar">
+          <span style={{ fontSize: "0.85rem", fontWeight: "600", color: "#e2e8f0" }}>
+            已选中 {selectedFileIds.size} 个文件
+          </span>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              onClick={handleBatchDownload}
+              className="btn-download-action success"
+              style={{
+                padding: "6px 14px",
+                borderRadius: "6px",
+                border: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "0.8rem",
+                cursor: "pointer",
+                fontWeight: "600"
+              }}
+            >
+              <Download size={14} />
+              批量下载到本地
+            </button>
+            <button
+              onClick={() => setSelectedFileIds(new Set())}
+              style={{
+                backgroundColor: "transparent",
+                border: "1px solid rgba(255, 255, 255, 0.2)",
+                color: "#e2e8f0",
+                padding: "6px 12px",
+                borderRadius: "6px",
+                fontSize: "0.8rem",
+                cursor: "pointer",
+                transition: "all 0.2s"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+                e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.3)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "transparent";
+                e.currentTarget.style.borderColor = "rgba(255, 255, 255, 0.2)";
+              }}
+            >
+              取消选择
+            </button>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .table-row-hover:hover td {

@@ -1,10 +1,103 @@
 import React from "react";
-import { ChatMessage } from "../api/types";
+import { ChatMessage, TelegramEntity } from "../api/types";
 import { EntityTextRenderer } from "./EntityTextRenderer";
 import { MediaPreview } from "./MediaPreview";
 import { InlineKeyboardPreview } from "./InlineKeyboardPreview";
 import { Check, CheckCheck, Clock, AlertTriangle, ShieldCheck } from "lucide-react";
 import { useApp } from "../context/AppContext";
+
+interface MetadataItem {
+  key: string;
+  value: string;
+}
+
+type TextChunk =
+  | { type: "text"; content: string; startIndex: number }
+  | { type: "metadata"; items: MetadataItem[] };
+
+const isMetadataLine = (line: string): MetadataItem | null => {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const colonIdx = trimmed.indexOf(" : ");
+  if (colonIdx === -1) return null;
+
+  const key = trimmed.slice(0, colonIdx).trim();
+  const value = trimmed.slice(colonIdx + 3).trim();
+
+  // Key validation: uppercase letters, numbers, spaces, underscores, dashes, slashes, brackets
+  if (/^[A-Z0-9\s/_()[\]-]+$/.test(key) && key.length > 0 && key.length <= 30) {
+    return { key, value };
+  }
+  return null;
+};
+
+const parseMessageChunks = (text: string): TextChunk[] => {
+  const lines = text.split("\n");
+  const chunks: TextChunk[] = [];
+  let currentMetadataRun: MetadataItem[] = [];
+  let currentTextRun: string[] = [];
+  let runningOffset = 0;
+  let textRunStartOffset = 0;
+
+  const flushText = () => {
+    if (currentTextRun.length > 0) {
+      chunks.push({
+        type: "text",
+        content: currentTextRun.join("\n"),
+        startIndex: textRunStartOffset,
+      });
+      currentTextRun = [];
+    }
+  };
+
+  const flushMetadata = () => {
+    if (currentMetadataRun.length > 0) {
+      if (currentMetadataRun.length >= 2) {
+        chunks.push({ type: "metadata", items: currentMetadataRun });
+      } else {
+        const single = currentMetadataRun[0];
+        if (currentTextRun.length === 0) {
+          textRunStartOffset = runningOffset - (single.key.length + 3 + single.value.length + 1);
+        }
+        currentTextRun.push(`${single.key} : ${single.value}`);
+      }
+      currentMetadataRun = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const meta = isMetadataLine(line);
+    
+    if (meta) {
+      flushText();
+      currentMetadataRun.push(meta);
+    } else {
+      if (currentTextRun.length === 0) {
+        textRunStartOffset = runningOffset;
+      }
+      currentTextRun.push(line);
+      flushMetadata();
+    }
+    
+    runningOffset += line.length + 1; // +1 for the newline
+  }
+  flushText();
+  flushMetadata();
+
+  return chunks;
+};
+
+const getChunkEntities = (entities: TelegramEntity[] | undefined, startIndex: number, length: number): TelegramEntity[] => {
+  if (!entities) return [];
+  const chunkEnd = startIndex + length;
+  return entities
+    .filter(ent => ent.offsetUtf16 >= startIndex && ent.offsetUtf16 + ent.lengthUtf16 <= chunkEnd)
+    .map(ent => ({
+      ...ent,
+      offsetUtf16: ent.offsetUtf16 - startIndex,
+    }));
+};
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -133,11 +226,81 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
                 fontSize: "0.9rem",
                 lineHeight: "1.4",
                 color: message.status === "failed" ? "rgba(255,255,255,0.7)" : (isOutgoing ? "var(--bubble-outgoing-text)" : "var(--bubble-incoming-text)"),
-                whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
               }}
             >
-              <EntityTextRenderer text={message.text} entities={message.entities} />
+              {(() => {
+                const chunks = parseMessageChunks(message.text);
+                const hasMetadata = chunks.some(chunk => chunk.type === "metadata");
+                
+                if (!hasMetadata) {
+                  return (
+                    <div style={{ whiteSpace: "pre-wrap" }}>
+                      <EntityTextRenderer text={message.text} entities={message.entities} />
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {chunks.map((chunk, idx) => {
+                      if (chunk.type === "text") {
+                        const chunkEntities = getChunkEntities(message.entities, chunk.startIndex, chunk.content.length);
+                        return (
+                          <div key={idx} style={{ whiteSpace: "pre-wrap" }}>
+                            <EntityTextRenderer text={chunk.content} entities={chunkEntities} />
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              backgroundColor: isOutgoing ? "rgba(255, 255, 255, 0.12)" : "rgba(15, 23, 42, 0.03)",
+                              border: isOutgoing ? "1px solid rgba(255, 255, 255, 0.18)" : "1px solid rgba(15, 23, 42, 0.06)",
+                              borderRadius: "8px",
+                              padding: "10px 12px",
+                              display: "grid",
+                              gridTemplateColumns: "auto 1fr",
+                              rowGap: "6px",
+                              columnGap: "16px",
+                              alignItems: "baseline",
+                              margin: "4px 0",
+                            }}
+                          >
+                            {chunk.items.map((item, itemIdx) => (
+                              <React.Fragment key={itemIdx}>
+                                <span
+                                  style={{
+                                    fontSize: "0.72rem",
+                                    fontWeight: 600,
+                                    color: isOutgoing ? "rgba(255, 255, 255, 0.75)" : "var(--text-secondary)",
+                                    letterSpacing: "0.05em",
+                                    textTransform: "uppercase",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {item.key}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: "0.82rem",
+                                    fontWeight: 500,
+                                    color: isOutgoing ? "#ffffff" : "var(--text-primary)",
+                                    wordBreak: "break-word",
+                                  }}
+                                >
+                                  {item.value}
+                                </span>
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        );
+                      }
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

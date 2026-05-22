@@ -583,24 +583,6 @@ export const SettingsPage: React.FC = () => {
       </div>
 
       <style>{`
-        .settings-card {
-          background-color: var(--bg-sidebar);
-          border: 1px solid var(--border-color);
-          border-radius: 8px;
-          padding: 16px;
-        }
-        .settings-card-title {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          font-size: 0.85rem;
-          font-weight: 700;
-          color: var(--text-primary);
-          margin-bottom: 12px;
-          border-bottom: 1px solid var(--border-color);
-          padding-bottom: 6px;
-        }
         .settings-row {
           display: flex;
           justify-content: space-between;

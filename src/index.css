@@ -509,6 +509,26 @@ a:hover {
   border-radius: 1px;
 }
 
+/* Card layout styles shared globally */
+.settings-card {
+  background-color: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+}
+.settings-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+}
+
 .cache-page {
   height: 100%;
   overflow-y: auto;
@@ -552,13 +572,17 @@ a:hover {
 
 .cache-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 16px;
   margin-top: 18px;
 }
 
 .cache-summary-card {
   min-height: 112px;
+}
+.cache-summary-card button.btn-secondary {
+  width: 100%;
+  justify-content: center;
 }
 
 .cache-metric {
@@ -582,6 +606,16 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.cache-interval-row select.settings-input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+.cache-interval-row .btn-secondary {
+  white-space: nowrap;
+  flex-shrink: 0;
+  width: auto;
 }
 
 .cache-table-wrap {
@@ -899,10 +933,66 @@ a:hover {
   border-color: rgba(148, 163, 184, 0.3);
 }
 
+/* Uniform Alignment for Download Progress Column */
+.download-progress-col-wrap {
+  width: 200px;
+}
+.download-progress-col-wrap .btn-download-action.start,
+.download-progress-col-wrap .btn-download-action.success {
+  width: 100%;
+  justify-content: center;
+}
+.download-progress-container-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.download-progress-container-inline .status-pill {
+  width: 96px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.download-progress-container-inline .btn-download-action {
+  width: 96px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Batch Action Bar */
+@keyframes slide-up {
+  from {
+    transform: translate(-50%, 100%);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+.batch-action-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #0f172a;
+  color: #ffffff;
+  padding: 10px 20px;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 16px -8px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  z-index: 100;
+  animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 /* Cache Table Action Buttons */
 .btn-cache-action {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 5px 10px;
   border-radius: 4px;
@@ -911,6 +1001,8 @@ a:hover {
   cursor: pointer;
   transition: all 0.2s;
   border: 1px solid transparent;
+  width: 110px;
+  text-align: center;
 }
 .btn-cache-action.download {
   background-color: var(--accent-blue-transparent);

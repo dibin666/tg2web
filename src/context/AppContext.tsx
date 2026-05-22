@@ -721,7 +721,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (exists) {
               return prev.map((f) => (f.id === event.file.id ? event.file : f));
             }
-            return [event.file, ...prev];
+            return [
+              event.file,
+              ...prev.filter((f) => f.messageId !== event.file.messageId),
+            ];
           });
           break;
 
