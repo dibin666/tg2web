@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { apiClient } from "../api/client";
 import { QobuzStoreRegion, QobuzAlbumSearchResponse } from "../api/types";
-import { Search, Music, ExternalLink, RefreshCw, AlertCircle, ShoppingBag, Disc } from "lucide-react";
+import { Search, Music, ExternalLink, RefreshCw, AlertCircle, ShoppingBag, Disc, Download } from "lucide-react";
+import { useApp } from "../context/AppContext";
 
 const REGION_CN_MAP: Record<string, string> = {
   "au-en": "澳大利亚 (英文)",
@@ -31,6 +32,7 @@ const REGION_CN_MAP: Record<string, string> = {
 };
 
 export const QobuzSearchPage: React.FC = () => {
+  const { addToDownloadQueue } = useApp();
   const [regions, setRegions] = useState<QobuzStoreRegion[]>([]);
   const [regionsLoading, setRegionsLoading] = useState(true);
   const [regionsError, setRegionsError] = useState<string | null>(null);
@@ -382,6 +384,31 @@ export const QobuzSearchPage: React.FC = () => {
                         {album.artist || "未知艺人"}
                       </span>
 
+                      {/* Specs and Release Date */}
+                      <div
+                        style={{
+                          fontSize: "0.68rem",
+                          color: "var(--text-muted)",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "2px",
+                          marginTop: "2px",
+                        }}
+                      >
+                        {album.releaseDateDisplay && (
+                          <div>
+                            <span>发布: {album.releaseDateDisplay}</span>
+                          </div>
+                        )}
+                        {(album.bitDepth || album.sampleRate) && (
+                          <div style={{ color: "var(--accent-blue)", fontWeight: "500" }}>
+                            {album.bitDepth && <span>{album.bitDepth} Bit</span>}
+                            {album.bitDepth && album.sampleRate && <span> / </span>}
+                            {album.sampleRate && <span>{album.sampleRate} kHz</span>}
+                          </div>
+                        )}
+                      </div>
+
                       {/* Metadata row */}
                       <div
                         style={{
@@ -405,6 +432,36 @@ export const QobuzSearchPage: React.FC = () => {
                           </span>
                         )}
                       </div>
+
+                      {/* Download Push Button */}
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          addToDownloadQueue(album);
+                        }}
+                        style={{
+                          marginTop: "8px",
+                          width: "100%",
+                          padding: "6px 10px",
+                          borderRadius: "6px",
+                          backgroundColor: "rgba(59, 130, 246, 0.08)",
+                          border: "1px solid rgba(59, 130, 246, 0.2)",
+                          color: "var(--accent-blue)",
+                          fontSize: "0.72rem",
+                          fontWeight: "600",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px",
+                          transition: "all 0.15s ease",
+                        }}
+                        className="push-download-btn"
+                      >
+                        <Download size={12} />
+                        <span>一键推送</span>
+                      </button>
                     </div>
                   </a>
                 ))}
@@ -419,6 +476,11 @@ export const QobuzSearchPage: React.FC = () => {
         .qobuz-album-card:hover {
           transform: translateY(-4px);
           box-shadow: var(--shadow-lg);
+          border-color: var(--accent-blue) !important;
+        }
+        .push-download-btn:hover {
+          background-color: var(--accent-blue) !important;
+          color: white !important;
           border-color: var(--accent-blue) !important;
         }
         @keyframes spin {

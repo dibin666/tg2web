@@ -4,6 +4,7 @@ import { MessageInspector } from "./MessageInspector";
 import { useApp } from "../context/AppContext";
 import { Menu, X } from "lucide-react";
 import { useLocation } from "react-router-dom";
+import { DownloadQueueWidget } from "./DownloadQueueWidget";
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { selectedMessage } = useApp();
@@ -133,6 +134,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           }
         }
       `}</style>
+      <DownloadQueueWidget />
     </div>
   );
 };

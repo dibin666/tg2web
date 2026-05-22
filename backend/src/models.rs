@@ -973,6 +973,10 @@ pub struct QobuzAlbumSearchItem {
     pub track_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bit_depth: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

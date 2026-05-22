@@ -355,6 +355,8 @@ export type QobuzAlbumSearchItem = {
   genre?: string;
   trackCount?: number;
   quality?: string;
+  bitDepth?: number;
+  sampleRate?: string;
 };
 
 export type QobuzAlbumSearchResponse = {
@@ -366,5 +368,17 @@ export type QobuzAlbumSearchResponse = {
   totalPages?: number;
   sourceUrl: string;
   albums: QobuzAlbumSearchItem[];
+};
+
+export type QueueItem = {
+  id: string;
+  albumId: string;
+  title: string;
+  artist: string;
+  coverUrl?: string;
+  albumUrl: string;
+  status: "queued" | "downloading" | "completed" | "failed";
+  addedAt: string;
+  logs: string[];
 };
 
