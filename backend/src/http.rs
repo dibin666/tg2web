@@ -722,8 +722,11 @@ async fn list_telegram_chats(
     State(state): State<AppState>,
     Query(query): Query<ChatsQuery>,
 ) -> Json<Vec<crate::models::DiscoveredTelegramChat>> {
-    let _ = query.kind;
-    Json(state.list_discovered_chats(query.query).await)
+    Json(
+        state
+            .list_discovered_chats_filtered(query.query, query.kind.as_deref())
+            .await,
+    )
 }
 
 async fn search_telegram_username(

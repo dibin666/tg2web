@@ -3052,16 +3052,36 @@ impl AppState {
         .map_err(AppError::from)
     }
 
+    #[cfg(test)]
     pub async fn list_discovered_chats(
         &self,
         query: Option<String>,
     ) -> Vec<DiscoveredTelegramChat> {
+        self.list_discovered_chats_filtered(query, None).await
+    }
+
+    pub async fn list_discovered_chats_filtered(
+        &self,
+        query: Option<String>,
+        kind: Option<&str>,
+    ) -> Vec<DiscoveredTelegramChat> {
         let normalized_query = query.map(|value| value.trim().to_lowercase());
+        let normalized_kind = kind
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
         self.runtime
             .read()
             .await
             .discovered_chats
             .iter()
+            .filter(|chat| match normalized_kind.as_deref() {
+                Some("bot" | "bots") => chat.is_bot || chat.kind == TelegramChatKind::Bot,
+                Some("group" | "groups") => chat.kind == TelegramChatKind::Group,
+                Some("channel" | "channels") => chat.kind == TelegramChatKind::Channel,
+                Some("user" | "users") => chat.kind == TelegramChatKind::User && !chat.is_bot,
+                Some("unknown") => chat.kind == TelegramChatKind::Unknown && !chat.is_bot,
+                Some(_) | None => true,
+            })
             .filter(|chat| match &normalized_query {
                 Some(query) if !query.is_empty() => {
                     chat.title.to_lowercase().contains(query)
@@ -6111,6 +6131,40 @@ mod tests {
         assert_eq!(chats[0].kind, TelegramChatKind::Bot);
         assert!(chats[0].is_bot);
         assert_eq!(chats[0].status, BotStatus::Available);
+    }
+
+    #[tokio::test]
+    async fn list_discovered_chats_filters_to_bots_when_requested() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = AppConfig::for_test(dir.path());
+        let db = storage::connect(&config.database_path).await.expect("db");
+        let now = now_rfc3339();
+        sqlx::query(
+            "INSERT INTO discovered_telegram_chats \
+             (telegram_chat_id, username, title, kind, is_bot, status, discovered_at, updated_at) \
+             VALUES \
+             ('bot_chat', 'publish_bot', 'Publish Bot', 'bot', 1, 'available', ?, ?), \
+             ('group_chat', 'team_group', 'Team Group', 'group', 0, 'unknown', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
+        .execute(&db)
+        .await
+        .expect("seed discovered chats");
+        drop(db);
+
+        let state = AppState::new(config).await.expect("state");
+        let all = state.list_discovered_chats(None).await;
+        let bots = state
+            .list_discovered_chats_filtered(None, Some("bot"))
+            .await;
+
+        assert_eq!(all.len(), 2);
+        assert_eq!(bots.len(), 1);
+        assert_eq!(bots[0].telegram_chat_id, "bot_chat");
+        assert!(bots[0].is_bot);
     }
 
     #[tokio::test]
