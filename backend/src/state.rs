@@ -68,6 +68,31 @@ struct TelegramRuntime {
     qr_link: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct DownloadMessageContext {
+    telegram_chat_id: i64,
+    telegram_message_id: i64,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadMessageExtra {
+    download_id: String,
+    requested_file_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TdjsonDownloadFileRole {
+    Main,
+    Thumbnail,
+}
+
+#[derive(Debug, Clone)]
+struct TdjsonDownloadFileCandidate {
+    file_id: String,
+    role: TdjsonDownloadFileRole,
+    file: Value,
+}
+
 impl Default for TelegramRuntime {
     fn default() -> Self {
         Self {
@@ -1069,6 +1094,12 @@ impl AppState {
     async fn apply_tdjson_response(&self, response: Value) -> AppResult<()> {
         match tdjson_value_type(&response) {
             Some("message") => {
+                if self
+                    .apply_tdjson_download_message_response(&response)
+                    .await?
+                {
+                    return Ok(());
+                }
                 self.persist_tdjson_message(response).await?;
             }
             Some("messages") => {
@@ -1093,6 +1124,106 @@ impl AppState {
             _ => {}
         }
         Ok(())
+    }
+
+    async fn apply_tdjson_download_message_response(&self, response: &Value) -> AppResult<bool> {
+        let Some(extra) = response
+            .get("@extra")
+            .and_then(Value::as_str)
+            .and_then(parse_download_message_extra)
+        else {
+            return Ok(false);
+        };
+
+        let mut message = response.clone();
+        if let Some(object) = message.as_object_mut() {
+            object.remove("@extra");
+        }
+        self.persist_tdjson_message(message.clone()).await?;
+
+        let Some(candidate) = self
+            .select_tdjson_download_candidate(&extra, &message)
+            .await?
+        else {
+            self.update_download_status(
+                &extra.download_id,
+                DownloadStatus::Failed,
+                Some(
+                    "Telegram message media could not be safely matched for download; refresh history and retry"
+                        .to_string(),
+                ),
+            )
+            .await?;
+            return Ok(true);
+        };
+
+        self.update_download_file_identity(
+            &extra.download_id,
+            &candidate.file_id,
+            tdjson_file_size(Some(&candidate.file)),
+        )
+        .await?;
+        self.apply_tdjson_file_object(&candidate.file).await?;
+
+        let refreshed = self.download(&extra.download_id).await?;
+        if refreshed.status == DownloadStatus::Ready {
+            return Ok(true);
+        }
+
+        self.request_resolved_tdlib_download(&extra.download_id, &candidate.file_id)
+            .await?;
+        Ok(true)
+    }
+
+    async fn select_tdjson_download_candidate(
+        &self,
+        extra: &DownloadMessageExtra,
+        message: &Value,
+    ) -> AppResult<Option<TdjsonDownloadFileCandidate>> {
+        let candidates = tdjson_download_file_candidates(message);
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        let download = self.download(&extra.download_id).await?;
+        if let Some(candidate) = candidates
+            .iter()
+            .find(|candidate| {
+                tdjson_candidate_matches_file_id(candidate, &extra.requested_file_id)
+                    || tdjson_candidate_matches_file_id(candidate, &download.file_id)
+            })
+            .cloned()
+        {
+            return Ok(Some(candidate));
+        }
+
+        let thumbnail_candidates = candidates
+            .iter()
+            .filter(|candidate| candidate.role == TdjsonDownloadFileRole::Thumbnail)
+            .cloned()
+            .collect::<Vec<_>>();
+        let wants_thumbnail = download.file_name.as_deref().is_some_and(|name| {
+            name.eq_ignore_ascii_case("telegram-preview.jpg")
+                || name.to_ascii_lowercase().contains("thumbnail")
+        });
+        if wants_thumbnail && thumbnail_candidates.len() == 1 {
+            return Ok(thumbnail_candidates.into_iter().next());
+        }
+
+        let main_candidates = candidates
+            .iter()
+            .filter(|candidate| candidate.role == TdjsonDownloadFileRole::Main)
+            .cloned()
+            .collect::<Vec<_>>();
+        if main_candidates.len() == 1 {
+            return Ok(main_candidates.into_iter().next());
+        }
+
+        if candidates.len() == 1 {
+            return Ok(candidates.into_iter().next());
+        }
+
+        Ok(None)
     }
 
     async fn apply_tdjson_user_full_info_response(&self, response: Value) -> AppResult<()> {
@@ -1152,6 +1283,24 @@ impl AppState {
         };
         if extra.starts_with("bot_commands") {
             tracing::debug!(raw = %response, "optional bot command TDLib request failed");
+            return Ok(());
+        }
+
+        if let Some(extra) = parse_download_message_extra(&extra) {
+            let message = non_empty_string(response.get("message"))
+                .unwrap_or_else(|| "TDLib message lookup failed".to_string());
+            let code = response
+                .get("code")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            self.update_download_status(
+                &extra.download_id,
+                DownloadStatus::Failed,
+                Some(format!(
+                    "failed to resolve Telegram message before download: TDLib error {code}: {message}"
+                )),
+            )
+            .await?;
             return Ok(());
         }
 
@@ -2677,6 +2826,33 @@ impl AppState {
             return Ok(());
         }
 
+        let desired_ids = files
+            .iter()
+            .map(|file| file.id.clone())
+            .collect::<HashSet<_>>();
+        let existing_rows = sqlx::query("SELECT id FROM workspace_files WHERE message_id = ?")
+            .bind(&message.id)
+            .fetch_all(&self.db)
+            .await?;
+        let mut removed_ids = Vec::new();
+        for row in existing_rows {
+            let existing_id: String = row.try_get("id")?;
+            if desired_ids.contains(&existing_id) {
+                continue;
+            }
+            sqlx::query("DELETE FROM workspace_files WHERE id = ?")
+                .bind(&existing_id)
+                .execute(&self.db)
+                .await?;
+            removed_ids.push(existing_id);
+        }
+        if !removed_ids.is_empty() {
+            let mut runtime = self.runtime.write().await;
+            runtime
+                .workspace_files
+                .retain(|file| !removed_ids.iter().any(|removed| removed == &file.id));
+        }
+
         let mut emitted = Vec::new();
         for file in files {
             let existed = sqlx::query("SELECT 1 FROM workspace_files WHERE id = ? LIMIT 1")
@@ -3165,6 +3341,9 @@ impl AppState {
         let message_id = request.message_id;
         let file_name = request.file_name;
         let requested_size_bytes = request.size_bytes;
+        let has_message_context = message_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
 
         if let Some(existing_id) = self
             .download_id_for_scope(&file_id, message_id.as_deref())
@@ -3195,7 +3374,7 @@ impl AppState {
                     None,
                     false,
                 )
-            } else if file_id.parse::<i32>().is_err() {
+            } else if file_id.parse::<i32>().is_err() && !has_message_context {
                 (
                     DownloadStatus::Failed,
                     0,
@@ -3316,6 +3495,43 @@ impl AppState {
         )
     }
 
+    async fn request_tdlib_message_for_download(
+        &self,
+        download_id: &str,
+        file_id: &str,
+        context: DownloadMessageContext,
+    ) -> AppResult<DownloadItem> {
+        let credentials = self.telegram_credentials().await?;
+        match self.telegram_bridge.send_request(
+            credentials,
+            json!({
+                "@type": "getMessage",
+                "@extra": format!("download_message:{download_id}:{file_id}"),
+                "chat_id": context.telegram_chat_id,
+                "message_id": context.telegram_message_id,
+            }),
+        ) {
+            Ok(()) => {
+                self.update_download_status(
+                    download_id,
+                    DownloadStatus::Queued,
+                    Some("resolving Telegram message media before download".to_string()),
+                )
+                .await
+            }
+            Err(error) => {
+                self.update_download_status(
+                    download_id,
+                    DownloadStatus::Queued,
+                    Some(format!(
+                        "waiting to resolve Telegram message media before download: {error}"
+                    )),
+                )
+                .await
+            }
+        }
+    }
+
     async fn telegram_download_runtime_ready(&self) -> bool {
         if !self.telegram_bridge.is_runtime_started() {
             return false;
@@ -3343,6 +3559,28 @@ impl AppState {
         Ok(())
     }
 
+    async fn request_resolved_tdlib_download(
+        &self,
+        download_id: &str,
+        file_id: &str,
+    ) -> AppResult<DownloadItem> {
+        match self.request_tdlib_download(file_id).await {
+            Ok(()) => {
+                self.update_download_status(download_id, DownloadStatus::Downloading, None)
+                    .await
+            }
+            Err(error @ AppError::BadRequest { .. }) => Err(error),
+            Err(error) => {
+                self.update_download_status(
+                    download_id,
+                    DownloadStatus::Queued,
+                    Some(format!("waiting for Telegram download runtime: {error}")),
+                )
+                .await
+            }
+        }
+    }
+
     async fn request_or_queue_download(
         &self,
         download_id: &str,
@@ -3356,13 +3594,6 @@ impl AppState {
                 .mark_download_ready_from_cache(download_id, file_id)
                 .await;
         }
-
-        file_id.parse::<i32>().map_err(|_| {
-            AppError::bad_request(
-                "invalid_tdlib_file_id",
-                "download requires a numeric TDLib file id from a Telegram media message",
-            )
-        })?;
 
         if !self.telegram_download_runtime_ready().await {
             return match self.ensure_download_runtime_started().await {
@@ -3398,21 +3629,32 @@ impl AppState {
             };
         }
 
-        match self.request_tdlib_download(file_id).await {
-            Ok(()) => {
-                self.update_download_status(download_id, DownloadStatus::Downloading, None)
-                    .await
+        let download = self.download(download_id).await?;
+        if download
+            .message_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            if let Some(context) = self.download_message_context(&download).await? {
+                return self
+                    .request_tdlib_message_for_download(download_id, file_id, context)
+                    .await;
             }
-            Err(error @ AppError::BadRequest { .. }) => Err(error),
-            Err(error) => {
-                self.update_download_status(
+
+            return self
+                .update_download_status(
                     download_id,
-                    DownloadStatus::Queued,
-                    Some(format!("waiting for Telegram download runtime: {error}")),
+                    DownloadStatus::Failed,
+                    Some(
+                        "download cannot safely resolve the original Telegram message; refresh history and retry"
+                            .to_string(),
+                    ),
                 )
-                .await
-            }
+                .await;
         }
+
+        self.request_resolved_tdlib_download(download_id, file_id)
+            .await
     }
 
     async fn mark_download_ready_from_cache(
@@ -3529,6 +3771,57 @@ impl AppState {
         .map_err(AppError::from)
     }
 
+    async fn download_message_context(
+        &self,
+        download: &DownloadItem,
+    ) -> AppResult<Option<DownloadMessageContext>> {
+        let Some(message_id) = download
+            .message_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+
+        let Some(row) = sqlx::query(
+            "SELECT telegram_chat_id, telegram_message_id FROM chat_messages \
+             WHERE is_ephemeral = 0 AND (id = ? OR telegram_message_id = ?) LIMIT 1",
+        )
+        .bind(message_id)
+        .bind(message_id)
+        .fetch_optional(&self.db)
+        .await?
+        else {
+            return Ok(None);
+        };
+
+        let telegram_chat_id: String = row.try_get("telegram_chat_id")?;
+        let telegram_message_id: Option<String> = row.try_get("telegram_message_id")?;
+        let Some(telegram_message_id) =
+            telegram_message_id.filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+
+        let telegram_chat_id = telegram_chat_id.parse::<i64>().map_err(|_| {
+            AppError::bad_request(
+                "invalid_telegram_chat_id",
+                "message has an invalid Telegram chat id",
+            )
+        })?;
+        let telegram_message_id = telegram_message_id.parse::<i64>().map_err(|_| {
+            AppError::bad_request(
+                "invalid_telegram_message_id",
+                "message has an invalid Telegram message id",
+            )
+        })?;
+
+        Ok(Some(DownloadMessageContext {
+            telegram_chat_id,
+            telegram_message_id,
+        }))
+    }
+
     async fn update_download_metadata(
         &self,
         download_id: &str,
@@ -3550,6 +3843,27 @@ impl AppState {
         .execute(&self.db)
         .await?;
         Ok(())
+    }
+
+    async fn update_download_file_identity(
+        &self,
+        download_id: &str,
+        file_id: &str,
+        size_bytes: Option<u64>,
+    ) -> AppResult<DownloadItem> {
+        let now = now_rfc3339();
+        sqlx::query(
+            "UPDATE downloads SET file_id = ?, size_bytes = COALESCE(size_bytes, ?), updated_at = ? \
+             WHERE id = ?",
+        )
+        .bind(file_id)
+        .bind(size_bytes.map(|value| value as i64))
+        .bind(&now)
+        .bind(download_id)
+        .execute(&self.db)
+        .await?;
+
+        self.refresh_download_after_update(download_id).await
     }
 
     pub async fn cached_file_bytes(&self, file_id: &str) -> AppResult<Vec<u8>> {
@@ -4372,6 +4686,19 @@ where
         .map_err(AppError::from)
 }
 
+fn parse_download_message_extra(extra: &str) -> Option<DownloadMessageExtra> {
+    let rest = extra.strip_prefix("download_message:")?;
+    let (download_id, requested_file_id) = rest.split_once(':')?;
+    if download_id.trim().is_empty() || requested_file_id.trim().is_empty() {
+        return None;
+    }
+
+    Some(DownloadMessageExtra {
+        download_id: download_id.to_string(),
+        requested_file_id: requested_file_id.to_string(),
+    })
+}
+
 fn proxy_url_for_file(file_id: &str) -> String {
     format!("/api/files/{}/proxy", percent_encode_path_segment(file_id))
 }
@@ -4907,6 +5234,137 @@ fn tdjson_content_media(content: Option<&Value>) -> Option<Vec<MessageMedia>> {
     };
 
     Some(vec![media])
+}
+
+fn tdjson_download_file_candidates(td_message: &Value) -> Vec<TdjsonDownloadFileCandidate> {
+    let Some(content) = td_message.get("content") else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::new();
+    match tdjson_value_type(content).unwrap_or_default() {
+        "messagePhoto" => {
+            let largest_size = content
+                .get("photo")
+                .and_then(|photo| photo.get("sizes"))
+                .and_then(Value::as_array)
+                .and_then(|sizes| {
+                    sizes.iter().max_by_key(|size| {
+                        let width = size.get("width").and_then(Value::as_u64).unwrap_or(0);
+                        let height = size.get("height").and_then(Value::as_u64).unwrap_or(0);
+                        width * height
+                    })
+                });
+            push_tdjson_file_candidate(
+                &mut candidates,
+                largest_size.and_then(|size| size.get("photo")),
+                TdjsonDownloadFileRole::Main,
+            );
+        }
+        "messageVideo" => {
+            if let Some(video) = content.get("video") {
+                push_tdjson_file_candidate(
+                    &mut candidates,
+                    video.get("video"),
+                    TdjsonDownloadFileRole::Main,
+                );
+                push_tdjson_thumbnail_candidate(&mut candidates, video.get("thumbnail"));
+            }
+        }
+        "messageAudio" => {
+            push_tdjson_file_candidate(
+                &mut candidates,
+                content.get("audio").and_then(|audio| audio.get("audio")),
+                TdjsonDownloadFileRole::Main,
+            );
+        }
+        "messageVoiceNote" => {
+            push_tdjson_file_candidate(
+                &mut candidates,
+                content
+                    .get("voice_note")
+                    .and_then(|voice| voice.get("voice")),
+                TdjsonDownloadFileRole::Main,
+            );
+        }
+        "messageDocument" => {
+            if let Some(document) = content.get("document") {
+                push_tdjson_file_candidate(
+                    &mut candidates,
+                    document.get("document"),
+                    TdjsonDownloadFileRole::Main,
+                );
+                push_tdjson_thumbnail_candidate(&mut candidates, document.get("thumbnail"));
+            }
+        }
+        "messageSticker" => {
+            if let Some(sticker) = content.get("sticker") {
+                push_tdjson_file_candidate(
+                    &mut candidates,
+                    sticker.get("sticker"),
+                    TdjsonDownloadFileRole::Main,
+                );
+                push_tdjson_thumbnail_candidate(&mut candidates, sticker.get("thumbnail"));
+            }
+        }
+        "messageAnimation" => {
+            if let Some(animation) = content.get("animation") {
+                push_tdjson_file_candidate(
+                    &mut candidates,
+                    animation.get("animation"),
+                    TdjsonDownloadFileRole::Main,
+                );
+                push_tdjson_thumbnail_candidate(&mut candidates, animation.get("thumbnail"));
+            }
+        }
+        _ => {}
+    }
+
+    candidates
+}
+
+fn push_tdjson_thumbnail_candidate(
+    candidates: &mut Vec<TdjsonDownloadFileCandidate>,
+    thumbnail: Option<&Value>,
+) {
+    push_tdjson_file_candidate(
+        candidates,
+        thumbnail.and_then(|thumbnail| thumbnail.get("file")),
+        TdjsonDownloadFileRole::Thumbnail,
+    );
+}
+
+fn push_tdjson_file_candidate(
+    candidates: &mut Vec<TdjsonDownloadFileCandidate>,
+    file: Option<&Value>,
+    role: TdjsonDownloadFileRole,
+) {
+    let Some(file) = file else {
+        return;
+    };
+    let Some(file_id) = tdjson_id_to_string(file.get("id")) else {
+        return;
+    };
+    candidates.push(TdjsonDownloadFileCandidate {
+        file_id,
+        role,
+        file: file.clone(),
+    });
+}
+
+fn tdjson_candidate_matches_file_id(
+    candidate: &TdjsonDownloadFileCandidate,
+    file_id: &str,
+) -> bool {
+    candidate.file_id == file_id
+        || tdjson_remote_file_id(&candidate.file)
+            .as_deref()
+            .is_some_and(|remote_file_id| remote_file_id == file_id)
+}
+
+fn tdjson_remote_file_id(file: &Value) -> Option<String> {
+    file.get("remote")
+        .and_then(|remote| non_empty_string(remote.get("id")))
 }
 
 fn tdjson_reply_to_message_id(td_message: &Value) -> Option<String> {
@@ -6152,6 +6610,128 @@ mod tests {
 
         let files = state.workspace_files().await;
         assert_eq!(files[0].file_name, "album.zip");
+    }
+
+    #[tokio::test]
+    async fn message_linked_redownload_rehydrates_current_tdlib_file_before_cache_copy() {
+        let (dir, state, bot) = state_with_published_bot(505050).await;
+
+        state
+            .persist_tdjson_message(json!({
+                "@type": "message",
+                "id": 7001,
+                "chat_id": bot.telegram_chat_id.parse::<i64>().unwrap(),
+                "date": 1_700_000_000,
+                "is_outgoing": false,
+                "content": {
+                    "@type": "messageDocument",
+                    "caption": { "@type": "formattedText", "text": "archive", "entities": [] },
+                    "document": {
+                        "@type": "document",
+                        "file_name": "album.zip",
+                        "mime_type": "application/zip",
+                        "document": {
+                            "@type": "file",
+                            "id": 111,
+                            "size": 11,
+                            "expected_size": 11
+                        }
+                    }
+                }
+            }))
+            .await
+            .expect("persist stale media message");
+
+        let files = state.workspace_files().await;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_id, "111");
+
+        let now = now_rfc3339();
+        sqlx::query(
+            "INSERT INTO downloads \
+             (id, file_id, message_id, file_name, mime_type, size_bytes, downloaded_bytes, status, error, created_at, updated_at) \
+             VALUES ('download_stale_message', '111', ?, 'album.zip', 'application/zip', 11, 0, 'expired', NULL, ?, ?)",
+        )
+        .bind(&files[0].message_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&state.db)
+        .await
+        .expect("seed stale download");
+        {
+            let mut runtime = state.runtime.write().await;
+            runtime.downloads = load_downloads(&state.db).await.expect("load downloads");
+        }
+
+        let current_file_path = dir.path().join("album-current.zip");
+        tokio::fs::write(&current_file_path, b"correct file")
+            .await
+            .expect("current tdlib file");
+        state
+            .apply_tdjson_response(json!({
+                "@type": "message",
+                "@extra": "download_message:download_stale_message:111",
+                "id": 7001,
+                "chat_id": bot.telegram_chat_id.parse::<i64>().unwrap(),
+                "date": 1_700_000_000,
+                "is_outgoing": false,
+                "content": {
+                    "@type": "messageDocument",
+                    "caption": { "@type": "formattedText", "text": "archive", "entities": [] },
+                    "document": {
+                        "@type": "document",
+                        "file_name": "album.zip",
+                        "mime_type": "application/zip",
+                        "document": {
+                            "@type": "file",
+                            "id": 222,
+                            "size": 12,
+                            "expected_size": 12,
+                            "local": {
+                                "@type": "localFile",
+                                "path": current_file_path.to_string_lossy(),
+                                "is_downloading_active": false,
+                                "is_downloading_completed": true,
+                                "downloaded_size": 12
+                            }
+                        }
+                    }
+                }
+            }))
+            .await
+            .expect("download message response");
+
+        let ready = state
+            .download("download_stale_message")
+            .await
+            .expect("download after rehydrate");
+        assert_eq!(ready.file_id, "222");
+        assert_eq!(ready.status, DownloadStatus::Ready);
+        assert_eq!(ready.proxy_url.as_deref(), Some("/api/files/222/proxy"));
+        assert_eq!(
+            state
+                .cached_file_bytes("222")
+                .await
+                .expect("current cached bytes"),
+            b"correct file"
+        );
+        assert!(matches!(
+            state.cached_file_bytes("111").await,
+            Err(AppError::NotFound { .. })
+        ));
+
+        let files = state.workspace_files().await;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file_id, "222");
+        assert!(
+            !state.replay_events(None, None).iter().any(|event| matches!(
+                event,
+                AppEvent::MessageSendAck {
+                    client_request_id,
+                    ..
+                } if client_request_id.starts_with("download_message:")
+            ))
+        );
     }
 
     #[test]
