@@ -25,13 +25,6 @@ struct QobuzStoreRegionSpec {
 
 const QOBUZ_STORE_REGIONS: &[QobuzStoreRegionSpec] = &[
     QobuzStoreRegionSpec {
-        code: "ar-es",
-        country: "Argentina",
-        language: "Spanish",
-        label: "Argentina",
-        accept_language: "es-AR,es;q=0.9,en;q=0.8",
-    },
-    QobuzStoreRegionSpec {
         code: "au-en",
         country: "Australia",
         language: "English",
@@ -60,13 +53,6 @@ const QOBUZ_STORE_REGIONS: &[QobuzStoreRegionSpec] = &[
         accept_language: "nl-BE,nl;q=0.9,en;q=0.8",
     },
     QobuzStoreRegionSpec {
-        code: "br-pt",
-        country: "Brazil",
-        language: "Portuguese",
-        label: "Brazil",
-        accept_language: "pt-BR,pt;q=0.9,en;q=0.8",
-    },
-    QobuzStoreRegionSpec {
         code: "ca-en",
         country: "Canada",
         language: "English",
@@ -79,20 +65,6 @@ const QOBUZ_STORE_REGIONS: &[QobuzStoreRegionSpec] = &[
         language: "French",
         label: "Canada - French",
         accept_language: "fr-CA,fr;q=0.9,en;q=0.8",
-    },
-    QobuzStoreRegionSpec {
-        code: "cl-es",
-        country: "Chile",
-        language: "Spanish",
-        label: "Chile",
-        accept_language: "es-CL,es;q=0.9,en;q=0.8",
-    },
-    QobuzStoreRegionSpec {
-        code: "co-es",
-        country: "Colombia",
-        language: "Spanish",
-        label: "Colombia",
-        accept_language: "es-CO,es;q=0.9,en;q=0.8",
     },
     QobuzStoreRegionSpec {
         code: "dk-en",
@@ -158,13 +130,6 @@ const QOBUZ_STORE_REGIONS: &[QobuzStoreRegionSpec] = &[
         accept_language: "fr-LU,fr;q=0.9,de;q=0.8,en;q=0.7",
     },
     QobuzStoreRegionSpec {
-        code: "mx-es",
-        country: "Mexico",
-        language: "Spanish",
-        label: "Mexico",
-        accept_language: "es-MX,es;q=0.9,en;q=0.8",
-    },
-    QobuzStoreRegionSpec {
         code: "nl-nl",
         country: "Netherlands",
         language: "Dutch",
@@ -184,13 +149,6 @@ const QOBUZ_STORE_REGIONS: &[QobuzStoreRegionSpec] = &[
         language: "English",
         label: "Norway",
         accept_language: "en-NO,en;q=0.9,no;q=0.8",
-    },
-    QobuzStoreRegionSpec {
-        code: "pt-pt",
-        country: "Portugal",
-        language: "Portuguese",
-        label: "Portugal",
-        accept_language: "pt-PT,pt;q=0.9,en;q=0.8",
     },
     QobuzStoreRegionSpec {
         code: "es-es",
@@ -512,6 +470,24 @@ fn album_quality(is_hires: bool, is_dsd: bool, is_dxd: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn store_regions_exclude_empty_album_autosuggest_regions() {
+        let regions = qobuz_store_regions();
+        let removed_codes = ["ar-es", "br-pt", "cl-es", "co-es", "mx-es", "pt-pt"];
+
+        assert_eq!(regions.len(), 24);
+        for removed_code in removed_codes {
+            assert!(!regions.iter().any(|region| region.code == removed_code));
+            assert!(matches!(
+                album_search_url(removed_code, "beatles", 1),
+                Err(AppError::BadRequest {
+                    code: "invalid_qobuz_region",
+                    ..
+                })
+            ));
+        }
+    }
 
     #[test]
     fn album_search_url_builds_autosuggest_routes() {
