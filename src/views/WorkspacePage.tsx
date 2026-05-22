@@ -261,10 +261,11 @@ export const WorkspacePage: React.FC = () => {
         backgroundColor: "var(--bg-app)",
         overflow: "hidden",
       }}
-      className="animate-fade-in"
+      className="animate-fade-in workspace-page"
     >
       {/* Workspace Header */}
       <div
+        className="workspace-header"
         style={{
           padding: "20px 24px",
           borderBottom: "1px solid var(--border-color)",
@@ -285,6 +286,7 @@ export const WorkspacePage: React.FC = () => {
 
         {/* Filters and search Bar */}
         <div
+          className="filters-row"
           style={{
             display: "flex",
             alignItems: "center",
@@ -294,6 +296,7 @@ export const WorkspacePage: React.FC = () => {
         >
           {/* Search Input */}
           <div
+            className="search-wrapper"
             style={{
               position: "relative",
               flex: 1,
@@ -325,6 +328,7 @@ export const WorkspacePage: React.FC = () => {
 
           {/* Bot Select Filter */}
           <div
+            className="bot-filter-wrapper"
             style={{
               display: "flex",
               alignItems: "center",
@@ -364,6 +368,7 @@ export const WorkspacePage: React.FC = () => {
 
         {/* File Type Filter Pills */}
         <div
+          className="type-pills-row"
           style={{
             display: "flex",
             alignItems: "center",
@@ -373,7 +378,7 @@ export const WorkspacePage: React.FC = () => {
             paddingTop: "12px",
           }}
         >
-          <span style={{ fontSize: "0.8rem", fontWeight: "600", color: "var(--text-secondary)", marginRight: "4px" }}>
+          <span className="type-pills-label" style={{ fontSize: "0.8rem", fontWeight: "600", color: "var(--text-secondary)", marginRight: "4px" }}>
             类型筛选:
           </span>
           {FILE_TYPE_OPTIONS.map((option) => {
@@ -408,6 +413,7 @@ export const WorkspacePage: React.FC = () => {
 
       {/* Files List Area */}
       <div
+        className="files-list-area"
         style={{
           flex: 1,
           padding: "24px",
@@ -452,7 +458,7 @@ export const WorkspacePage: React.FC = () => {
             <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
-                  <th style={{ width: "40px", padding: "12px 16px", backgroundColor: "#f8fafc", textAlign: "center" }}>
+                  <th className="col-checkbox" style={{ width: "40px", padding: "12px 16px", backgroundColor: "#f8fafc", textAlign: "center" }}>
                     <input
                       type="checkbox"
                       checked={isAllSelected}
@@ -465,22 +471,22 @@ export const WorkspacePage: React.FC = () => {
                       style={{ cursor: "pointer" }}
                     />
                   </th>
-                  <th style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
+                  <th className="col-filename" style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
                     {t("colFileName")}
                   </th>
-                  <th style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
+                  <th className="col-bot" style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
                     {t("colBot")}
                   </th>
-                  <th style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
+                  <th className="col-sender" style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
                     {t("colSender")}
                   </th>
-                  <th style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
+                  <th className="col-tag" style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
                     {t("colTag")}
                   </th>
-                  <th style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
+                  <th className="col-date" style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc" }}>
                     {t("colDate")}
                   </th>
-                  <th style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc", textAlign: "right" }}>
+                  <th className="col-status" style={{ padding: "12px 16px", fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)", backgroundColor: "#f8fafc", textAlign: "right" }}>
                     {t("colDownloadStatus")}
                   </th>
                 </tr>
@@ -501,7 +507,7 @@ export const WorkspacePage: React.FC = () => {
                       className="table-row-hover"
                     >
                       {/* Checkbox Column */}
-                      <td style={{ padding: "12px 16px", textAlign: "center", verticalAlign: "middle" }}>
+                      <td className="col-checkbox" style={{ padding: "12px 16px", textAlign: "center", verticalAlign: "middle" }}>
                         <input
                           type="checkbox"
                           checked={selectedFileIds.has(file.id)}
@@ -510,7 +516,7 @@ export const WorkspacePage: React.FC = () => {
                         />
                       </td>
                       {/* File Name Column */}
-                      <td style={{ padding: "12px 16px", verticalAlign: "middle" }}>
+                      <td className="col-filename" style={{ padding: "12px 16px", verticalAlign: "middle" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                           <div style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
                             {getFileIcon(file.mimeType, file.fileName)}
@@ -533,12 +539,43 @@ export const WorkspacePage: React.FC = () => {
                             <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
                               {fileType.label} · {formatBytes(file.sizeBytes)}
                             </span>
+                            {/* Mobile-only inline metadata */}
+                            <div className="mobile-only-file-meta" style={{ display: "none", flexDirection: "column", gap: "4px", marginTop: "4px" }}>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center" }}>
+                                <span style={{
+                                  display: "inline-block",
+                                  backgroundColor: "var(--accent-blue-transparent)",
+                                  color: "var(--accent-blue)",
+                                  fontSize: "0.65rem",
+                                  fontWeight: "600",
+                                  padding: "1px 6px",
+                                  borderRadius: "4px"
+                                }}>
+                                  {getBotTitle(file.botId)}
+                                </span>
+                                {file.tag && (
+                                  <span style={{
+                                    fontSize: "0.65rem",
+                                    color: "var(--accent-blue)",
+                                    backgroundColor: "var(--accent-blue-transparent)",
+                                    padding: "1px 6px",
+                                    borderRadius: "4px",
+                                    fontWeight: "600"
+                                  }}>
+                                    #{file.tag}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>
+                                来自: {file.senderName} · {new Date(file.receivedAt).toLocaleDateString()}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </td>
 
                       {/* Bot Column */}
-                      <td style={{ padding: "12px 16px", verticalAlign: "middle" }}>
+                      <td className="col-bot" style={{ padding: "12px 16px", verticalAlign: "middle" }}>
                         <span 
                           style={{ 
                             display: "inline-block", 
@@ -555,12 +592,12 @@ export const WorkspacePage: React.FC = () => {
                       </td>
 
                       {/* Sender Column */}
-                      <td style={{ padding: "12px 16px", verticalAlign: "middle", color: "var(--text-secondary)", fontSize: "0.8rem" }}>
+                      <td className="col-sender" style={{ padding: "12px 16px", verticalAlign: "middle", color: "var(--text-secondary)", fontSize: "0.8rem" }}>
                         {file.senderName}
                       </td>
 
                       {/* Tag Column */}
-                      <td style={{ padding: "12px 16px", verticalAlign: "middle" }}>
+                      <td className="col-tag" style={{ padding: "12px 16px", verticalAlign: "middle" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px", minHeight: "28px" }}>
                           {isEditingTag ? (
                             <div style={{ display: "flex", gap: "4px", width: "100%" }}>
@@ -623,12 +660,12 @@ export const WorkspacePage: React.FC = () => {
                       </td>
 
                       {/* Date Column */}
-                      <td style={{ padding: "12px 16px", verticalAlign: "middle", color: "var(--text-muted)", fontSize: "0.75rem" }}>
+                      <td className="col-date" style={{ padding: "12px 16px", verticalAlign: "middle", color: "var(--text-muted)", fontSize: "0.75rem" }}>
                         {new Date(file.receivedAt).toLocaleDateString()}
                       </td>
 
                       {/* Download Status Column */}
-                      <td style={{ padding: "12px 16px", verticalAlign: "middle", textAlign: "right" }}>
+                      <td className="col-status" style={{ padding: "12px 16px", verticalAlign: "middle", textAlign: "right" }}>
                         <div className="download-progress-col-wrap" style={{ display: "inline-block", textAlign: "left" }} onClick={e => e.stopPropagation()}>
                           <DownloadProgress
                             fileId={file.fileId}

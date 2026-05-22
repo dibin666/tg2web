@@ -1117,3 +1117,181 @@ a:hover {
     padding-right: 0;
   }
 }
+
+/* Mobile responsiveness adjustments */
+@media (max-width: 768px) {
+  /* Workspace Page Filters and search row stacking */
+  .workspace-page .filters-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  
+  .workspace-page .search-wrapper,
+  .workspace-page .bot-filter-wrapper {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  
+  .workspace-page .bot-filter-wrapper {
+    justify-content: space-between;
+  }
+
+  .workspace-page .bot-filter-wrapper select {
+    flex: 1;
+    text-align: right;
+  }
+
+  /* Horizontal scrolling for category pills */
+  .workspace-page .type-pills-row {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    margin-bottom: -4px;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+  }
+
+  .workspace-page .type-pills-label {
+    display: none; /* Hide the label to save valuable horizontal space on mobile */
+  }
+
+  .workspace-page .type-pills-row button {
+    flex-shrink: 0;
+  }
+
+  /* File history table column hiding and mobile inline metadata */
+  .workspace-page .files-list-area {
+    padding: 12px !important;
+  }
+
+  .workspace-page th.col-bot,
+  .workspace-page td.col-bot,
+  .workspace-page th.col-sender,
+  .workspace-page td.col-sender,
+  .workspace-page th.col-tag,
+  .workspace-page td.col-tag,
+  .workspace-page th.col-date,
+  .workspace-page td.col-date {
+    display: none !important;
+  }
+
+  .workspace-page td.col-filename {
+    padding-right: 8px !important;
+  }
+
+  .workspace-page .mobile-only-file-meta {
+    display: flex !important;
+  }
+
+  /* Compact Download Status/Action in Workspace Page */
+  .workspace-page .col-status {
+    width: 80px;
+    padding: 12px 8px !important;
+  }
+
+  .workspace-page .download-progress-col-wrap {
+    width: 80px;
+  }
+
+  .workspace-page .download-progress-col-wrap .status-pill span,
+  .workspace-page .download-progress-col-wrap .btn-download-action span,
+  .workspace-page .download-progress-col-wrap .download-progress > div:first-child {
+    display: none !important;
+  }
+
+  .workspace-page .download-progress-col-wrap .status-pill {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+    min-width: 0;
+    flex: 0 0 auto;
+  }
+
+  .workspace-page .download-progress-col-wrap .btn-download-action {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+    min-width: 0;
+    flex: 0 0 auto;
+  }
+
+  .workspace-page .download-progress-container-inline {
+    justify-content: flex-end;
+    gap: 4px;
+    width: 80px;
+  }
+
+  .workspace-page .download-progress-col-wrap .download-progress {
+    min-width: 0 !important;
+    width: 80px !important;
+  }
+
+  .workspace-page .download-progress-col-wrap .download-progress-track {
+    height: 4px;
+  }
+
+  /* Floating batch action bar width adjust on mobile */
+  .workspace-page .batch-action-bar {
+    width: calc(100% - 24px);
+    bottom: 12px;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .workspace-page .batch-action-bar div {
+    display: flex;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .workspace-page .batch-action-bar button {
+    flex: 1;
+    justify-content: center;
+  }
+
+  /* Downloads Page responsive card style stacking */
+  .downloads-table-header {
+    display: none !important;
+  }
+
+  .downloads-table-row {
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px !important;
+    gap: 8px;
+  }
+
+  .downloads-col-size,
+  .downloads-col-status {
+    display: none !important;
+  }
+
+  .downloads-mobile-meta {
+    display: flex !important;
+  }
+
+  .downloads-col-action {
+    width: 100%;
+    justify-content: flex-start !important;
+    margin-top: 4px;
+  }
+
+  .downloads-col-action .download-progress-container-inline {
+    justify-content: flex-start;
+    gap: 12px;
+  }
+
+  /* Chat Page responsive overrides */
+  .chat-header-details {
+    display: none !important;
+  }
+}

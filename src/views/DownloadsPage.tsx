@@ -81,6 +81,7 @@ export const DownloadsPage: React.FC = () => {
         }}
       >
         <div
+          className="downloads-table-header"
           style={{
             display: "grid",
             gridTemplateColumns: "2fr 1fr 1fr 2fr",
@@ -109,6 +110,7 @@ export const DownloadsPage: React.FC = () => {
           downloads.map((dl) => (
             <div
               key={dl.id}
+              className="downloads-table-row"
               style={{
                 display: "grid",
                 gridTemplateColumns: "2fr 1fr 1fr 2fr",
@@ -119,32 +121,41 @@ export const DownloadsPage: React.FC = () => {
               }}
             >
               {/* File Info */}
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+              <div className="downloads-col-info" style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
                 <File size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-                <span
-                  style={{
-                    fontWeight: "500",
-                    color: "var(--text-primary)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={dl.fileName}
-                >
-                  {dl.fileName || "telegram_file.bin"}
-                </span>
+                <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+                  <span
+                    style={{
+                      fontWeight: "500",
+                      color: "var(--text-primary)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={dl.fileName}
+                  >
+                    {dl.fileName || "telegram_file.bin"}
+                  </span>
+                  <div className="downloads-mobile-meta" style={{ display: "none", alignItems: "center", gap: "8px", fontSize: "0.7rem", color: "var(--text-secondary)", marginTop: "4px" }}>
+                    <span>{formatBytes(dl.sizeBytes)}</span>
+                    <span>•</span>
+                    <span style={{ textTransform: "capitalize", fontWeight: "600", color: getStatusColor(dl.status) }}>
+                      {dl.status}
+                    </span>
+                  </div>
+                </div>
               </div>
 
               {/* Size */}
-              <span style={{ color: "var(--text-secondary)" }}>{formatBytes(dl.sizeBytes)}</span>
+              <span className="downloads-col-size" style={{ color: "var(--text-secondary)" }}>{formatBytes(dl.sizeBytes)}</span>
 
               {/* Status */}
-              <span style={{ textTransform: "capitalize", fontWeight: "600", color: getStatusColor(dl.status) }}>
+              <span className="downloads-col-status" style={{ textTransform: "capitalize", fontWeight: "600", color: getStatusColor(dl.status) }}>
                 {dl.status}
               </span>
 
               {/* Action / Progress component */}
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <div className="downloads-col-action" style={{ display: "flex", justifyContent: "flex-end" }}>
                 <DownloadProgress
                   fileId={dl.fileId}
                   fileName={dl.fileName}

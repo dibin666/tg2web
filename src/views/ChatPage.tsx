@@ -76,6 +76,7 @@ export const ChatPage: React.FC = () => {
     >
       {/* Bot Chat Header */}
       <div
+        className="chat-header"
         style={{
           padding: "12px 20px",
           borderBottom: "1px solid var(--border-color)",
@@ -85,7 +86,7 @@ export const ChatPage: React.FC = () => {
           justifyContent: "space-between",
         }}
       >
-        <div>
+        <div className="chat-header-info">
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <h1 style={{ fontSize: "0.95rem", fontWeight: "700", color: "var(--text-primary)" }}>
               {activeBot.title}
@@ -115,7 +116,7 @@ export const ChatPage: React.FC = () => {
         </div>
 
         {/* Small header details */}
-        <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "12px" }}>
+        <div className="chat-header-details" style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "12px" }}>
           <span>Telegram Chat ID: <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{activeBot.telegramChatId}</code></span>
         </div>
       </div>
