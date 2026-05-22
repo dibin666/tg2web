@@ -26,6 +26,8 @@ import {
   Settings,
   TelegramStatusResponse,
   WorkspaceFile,
+  QobuzStoreRegion,
+  QobuzAlbumSearchResponse,
 } from "./types";
 
 export interface ApiClient {
@@ -49,6 +51,8 @@ export interface ApiClient {
   getWorkspaceFiles(): Promise<WorkspaceFile[]>;
   updateFileStatus(fileId: string, status: "pending" | "approved" | "rejected"): Promise<WorkspaceFile>;
   updateFileTag(fileId: string, tag: string): Promise<WorkspaceFile>;
+  getQobuzRegions(): Promise<QobuzStoreRegion[]>;
+  searchQobuzAlbums(region: string, query: string, page?: number): Promise<QobuzAlbumSearchResponse>;
 }
 export const VITE_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -433,6 +437,19 @@ export const apiClient: ApiClient = {
       method: "PATCH",
       body: jsonBody({ tag }),
     });
+  },
+
+  getQobuzRegions() {
+    return request<QobuzStoreRegion[]>("/api/qobuz/store/regions");
+  },
+
+  searchQobuzAlbums(region: string, query: string, page = 1) {
+    const params = new URLSearchParams({
+      region,
+      query,
+      page: String(page),
+    });
+    return request<QobuzAlbumSearchResponse>(`/api/qobuz/store/search/albums?${params.toString()}`);
   },
 };
 

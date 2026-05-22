@@ -335,3 +335,36 @@ export type PublishBotRequest = {
 };
 
 export type PatchPublishedBotRequest = Partial<Omit<PublishBotRequest, "telegramChatId">>;
+
+export type QobuzStoreRegion = {
+  code: string;
+  country: string;
+  language: string;
+  label: string;
+};
+
+export type QobuzAlbumSearchItem = {
+  id: string;
+  title: string;
+  artist?: string;
+  albumUrl: string;
+  coverUrl?: string;
+  price?: string;
+  currency?: string;
+  releaseDateDisplay?: string;
+  genre?: string;
+  trackCount?: number;
+  quality?: string;
+};
+
+export type QobuzAlbumSearchResponse = {
+  region: QobuzStoreRegion;
+  query: string;
+  page: number;
+  perPage: number;
+  total?: number;
+  totalPages?: number;
+  sourceUrl: string;
+  albums: QobuzAlbumSearchItem[];
+};
+

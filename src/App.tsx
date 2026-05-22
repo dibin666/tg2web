@@ -8,6 +8,7 @@ import { SettingsPage } from "./views/SettingsPage";
 import { LoginPage } from "./views/LoginPage";
 import { WorkspacePage } from "./views/WorkspacePage";
 import { CachePage } from "./views/CachePage";
+import { QobuzSearchPage } from "./views/QobuzSearchPage";
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({ children, requireAdmin = false }) => {
   const { userRole, loading } = useApp();
@@ -61,6 +62,7 @@ function App() {
                     <Route path="/bots/:botId" element={<ChatPage />} />
                     <Route path="/workspace" element={<WorkspacePage />} />
                     <Route path="/downloads" element={<DownloadsPage />} />
+                    <Route path="/qobuz" element={<QobuzSearchPage />} />
                     <Route
                       path="/cache"
                       element={
