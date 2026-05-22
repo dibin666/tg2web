@@ -10,14 +10,61 @@ import {
   Film, 
   Music, 
   File,
-  FolderOpen
+  FolderOpen,
+  Archive
 } from "lucide-react";
 
+type FileTypeKey = "all" | "image" | "archive" | "audio" | "video" | "document" | "other";
+
+const FILE_TYPE_OPTIONS: Array<{ key: FileTypeKey; label: string }> = [
+  { key: "all", label: "全部类型" },
+  { key: "image", label: "图片" },
+  { key: "archive", label: "压缩包" },
+  { key: "audio", label: "音频" },
+  { key: "video", label: "视频" },
+  { key: "document", label: "文档" },
+  { key: "other", label: "其他" },
+];
+
+const fileTypeFor = (mimeType: string, fileName: string): { key: Exclude<FileTypeKey, "all">; label: string } => {
+  const mime = mimeType.toLowerCase();
+  const name = fileName.toLowerCase();
+
+  if (mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg|avif|heic)$/.test(name)) {
+    return { key: "image", label: "图片" };
+  }
+  if (
+    mime.includes("zip")
+    || mime.includes("rar")
+    || mime.includes("7z")
+    || /\.(zip|rar|7z|tar|gz|tgz|bz2|xz)$/.test(name)
+  ) {
+    return { key: "archive", label: "压缩包" };
+  }
+  if (mime.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/.test(name)) {
+    return { key: "audio", label: "音频" };
+  }
+  if (mime.startsWith("video/") || /\.(mp4|avi|mov|mkv|webm|m4v)$/.test(name)) {
+    return { key: "video", label: "视频" };
+  }
+  if (
+    mime.startsWith("text/")
+    || mime.includes("pdf")
+    || mime.includes("document")
+    || mime.includes("spreadsheet")
+    || /\.(txt|pdf|doc|docx|xls|xlsx|csv|json|md|epub)$/.test(name)
+  ) {
+    return { key: "document", label: "文档" };
+  }
+  return { key: "other", label: "其他" };
+};
+
 export const WorkspacePage: React.FC = () => {
-  const { workspaceFiles, bots, updateFileTag, t } = useApp();
+  const { workspaceFiles, bots, downloads, updateFileTag, t } = useApp();
   
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBotId, setSelectedBotId] = useState<string>("all");
+  const [selectedFileType, setSelectedFileType] = useState<FileTypeKey>("all");
   
   // Track which file tag is being edited
   const [editingTagFileId, setEditingTagFileId] = useState<string | null>(null);
@@ -28,6 +75,8 @@ export const WorkspacePage: React.FC = () => {
     return workspaceFiles.filter(file => {
       // Bot filter
       if (selectedBotId !== "all" && file.botId !== selectedBotId) return false;
+      const fileType = fileTypeFor(file.mimeType, file.fileName);
+      if (selectedFileType !== "all" && fileType.key !== selectedFileType) return false;
       
       // Search filter (filename or tag or sender)
       if (searchQuery.trim()) {
@@ -35,12 +84,13 @@ export const WorkspacePage: React.FC = () => {
         const nameMatch = file.fileName.toLowerCase().includes(query);
         const tagMatch = file.tag ? file.tag.toLowerCase().includes(query) : false;
         const senderMatch = file.senderName.toLowerCase().includes(query);
-        return nameMatch || tagMatch || senderMatch;
+        const typeMatch = fileType.label.toLowerCase().includes(query);
+        return nameMatch || tagMatch || senderMatch || typeMatch;
       }
       
       return true;
     });
-  }, [workspaceFiles, selectedBotId, searchQuery]);
+  }, [workspaceFiles, selectedBotId, selectedFileType, searchQuery]);
 
   // Helper to format file size
   const formatBytes = (bytes: number, decimals = 2) => {
@@ -59,6 +109,9 @@ export const WorkspacePage: React.FC = () => {
     
     if (mime.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg)$/.test(name)) {
       return <ImageIcon size={20} style={{ color: "var(--accent-blue)" }} />;
+    }
+    if (fileTypeFor(mimeType, fileName).key === "archive") {
+      return <Archive size={20} style={{ color: "var(--accent-purple, #8b5cf6)" }} />;
     }
     if (mime.startsWith("video/") || /\.(mp4|avi|mov|mkv|webm)$/.test(name)) {
       return <Film size={20} style={{ color: "var(--accent-yellow)" }} />;
@@ -85,6 +138,22 @@ export const WorkspacePage: React.FC = () => {
   const getBotTitle = (botId: string) => {
     const bot = bots.find(b => b.id === botId);
     return bot ? bot.title : `Bot [${botId}]`;
+  };
+
+  const getDownloadForFile = (fileId: string, messageId: string) =>
+    downloads.find((download) => download.fileId === fileId && (download.messageId || "") === messageId)
+    || downloads.find((download) => download.fileId === fileId);
+
+  const fileCacheLabel = (fileId: string, messageId: string) => {
+    const download = getDownloadForFile(fileId, messageId);
+    if (!download) return "未缓存，可下载";
+    if (download.status === "ready") return "服务器已缓存";
+    if (download.status === "expired") return "缓存已清理，可重新下载";
+    if (download.status === "downloading" || download.status === "queued") return "正在下载到服务器";
+    if (download.status === "paused") return "已暂停";
+    if (download.status === "failed") return "下载失败";
+    if (download.status === "stopped") return "已停止";
+    return download.status;
   };
 
   return (
@@ -195,6 +264,41 @@ export const WorkspacePage: React.FC = () => {
               ))}
             </select>
           </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              backgroundColor: "var(--bg-app)",
+              border: "1px solid var(--border-color)",
+              borderRadius: "6px",
+              padding: "4px 10px",
+            }}
+          >
+            <File size={14} style={{ color: "var(--text-secondary)" }} />
+            <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>类型:</span>
+            <select
+              value={selectedFileType}
+              onChange={e => setSelectedFileType(e.target.value as FileTypeKey)}
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--text-primary)",
+                fontWeight: "500",
+                cursor: "pointer",
+                padding: "2px 20px 2px 4px",
+                backgroundColor: "transparent",
+                border: "none",
+                outline: "none",
+              }}
+            >
+              {FILE_TYPE_OPTIONS.map((type) => (
+                <option key={type.key} value={type.key}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -267,6 +371,7 @@ export const WorkspacePage: React.FC = () => {
               <tbody>
                 {filteredFiles.map(file => {
                   const isEditingTag = editingTagFileId === file.id;
+                  const fileType = fileTypeFor(file.mimeType, file.fileName);
                   
                   return (
                     <tr 
@@ -296,7 +401,10 @@ export const WorkspacePage: React.FC = () => {
                               {file.fileName}
                             </span>
                             <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
-                              {formatBytes(file.sizeBytes)}
+                              {fileType.label} · {formatBytes(file.sizeBytes)}
+                            </span>
+                            <span style={{ fontSize: "0.7rem", color: "var(--text-secondary)" }}>
+                              {fileCacheLabel(file.fileId, file.messageId)}
                             </span>
                           </div>
                         </div>

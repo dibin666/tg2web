@@ -1,29 +1,109 @@
 import React from "react";
 import { MessageMedia } from "../api/types";
 import { DownloadProgress } from "./DownloadProgress";
+import { proxyFileObjectUrl, proxyPathForFile } from "../api/client";
 import { FileText, Play, Music, Mic, FileQuestion, MapPin } from "lucide-react";
+import { useApp } from "../context/AppContext";
 
 interface MediaPreviewProps {
   media: MessageMedia;
   messageId: string;
 }
 
+const AuthenticatedMediaImage: React.FC<{
+  src: string;
+  alt: string;
+  className?: string;
+  reloadKey?: string;
+  style?: React.CSSProperties;
+  isPreparing?: boolean;
+}> = ({ src, alt, className, reloadKey, style, isPreparing }) => {
+  const [imageState, setImageState] = React.useState<{
+    key: string;
+    objectUrl: string | null;
+    failed: boolean;
+  }>({ key: "", objectUrl: null, failed: false });
+
+  React.useEffect(() => {
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    const key = `${src}:${reloadKey || ""}`;
+
+    void proxyFileObjectUrl(src)
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        createdUrl = url;
+        setImageState({ key, objectUrl: url, failed: false });
+      })
+      .catch(() => {
+        if (!cancelled) setImageState({ key, objectUrl: null, failed: true });
+      });
+
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [src, reloadKey]);
+
+  const currentKey = `${src}:${reloadKey || ""}`;
+  const objectUrl = imageState.key === currentKey ? imageState.objectUrl : null;
+  const failed = imageState.key === currentKey && imageState.failed;
+
+  if (objectUrl) {
+    return <img src={objectUrl} alt={alt} className={className} style={style} />;
+  }
+
+  return <div className="media-image-placeholder">{failed && !isPreparing ? "Preview unavailable" : "Loading preview..."}</div>;
+};
+
+const proxyFileIdFromPath = (path?: string) => {
+  if (!path) return undefined;
+  const marker = "/api/files/";
+  const start = path.indexOf(marker);
+  const end = path.indexOf("/proxy", start + marker.length);
+  if (start === -1 || end === -1) return undefined;
+  return decodeURIComponent(path.slice(start + marker.length, end));
+};
+
+const isTdlibFileId = (fileId?: string) => Boolean(fileId && /^-?\d+$/.test(fileId));
+
 export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) => {
+  const { downloads, downloadMedia } = useApp();
+  const previewSource = "thumbnailUrl" in media ? media.thumbnailUrl : undefined;
+  const previewFileId = media.kind === "photo"
+    ? media.fileId
+    : proxyFileIdFromPath(previewSource);
+  const previewDownload = previewFileId
+    ? downloads.find((item) => item.fileId === previewFileId && (item.messageId || "") === messageId)
+    : undefined;
+  const previewIsPreparing = previewDownload?.status === "queued" || previewDownload?.status === "downloading";
+  const reloadKey = previewDownload ? previewDownload.status : undefined;
+  const autoPreviewRequestedRef = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    const shouldRequestPreview =
+      !previewDownload || previewDownload.status === "expired" || previewDownload.status === "failed";
+    if (!previewFileId || !isTdlibFileId(previewFileId) || !shouldRequestPreview) return;
+    const requestKey = `${messageId}:${previewFileId}:${previewDownload?.status || "missing"}`;
+    if (autoPreviewRequestedRef.current.has(requestKey)) return;
+    autoPreviewRequestedRef.current.add(requestKey);
+    void downloadMedia(previewFileId, messageId, "telegram-preview.jpg");
+  }, [downloadMedia, messageId, previewDownload, previewFileId]);
+
   switch (media.kind) {
     case "photo":
       return (
-        <div className="media-preview-container">
-          {media.thumbnailUrl && (
-            <img src={media.thumbnailUrl} alt="Photo attachment" className="media-image" />
-          )}
-          <div style={{ padding: "8px", borderTop: "1px solid var(--border-color)", display: "flex", justifyContent: "flex-end" }}>
-            <DownloadProgress
-              fileId={media.fileId}
-              fileName="telegram_photo.jpg"
-              sizeBytes={250 * 1024} // mock size
-              messageId={messageId}
-            />
-          </div>
+        <div className="media-photo-preview">
+          <AuthenticatedMediaImage
+            src={media.thumbnailUrl || proxyPathForFile(media.fileId)}
+            alt="Photo attachment"
+            className="media-image"
+            reloadKey={reloadKey}
+            isPreparing={previewIsPreparing}
+          />
         </div>
       );
 
@@ -32,7 +112,7 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
         <div className="media-preview-container">
           <div style={{ position: "relative" }}>
             {media.thumbnailUrl ? (
-              <img src={media.thumbnailUrl} alt="Video thumbnail" className="media-image" style={{ filter: "brightness(0.7)" }} />
+              <AuthenticatedMediaImage src={media.thumbnailUrl} alt="Video thumbnail" className="media-image" reloadKey={reloadKey} isPreparing={previewIsPreparing} style={{ filter: "brightness(0.7)" }} />
             ) : (
               <div style={{ height: "150px", backgroundColor: "#000", display: "flex", alignItems: "center", justifyContent: "center" }} />
             )}
@@ -47,12 +127,11 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
               </div>
             )}
           </div>
-          <div style={{ padding: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="media-footer-download" style={{ justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>Video file</span>
             <DownloadProgress
               fileId={media.fileId}
               fileName="telegram_video.mp4"
-              sizeBytes={1024 * 1024 * 18} // mock 18MB
               messageId={messageId}
             />
           </div>
@@ -73,12 +152,14 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
               {media.performer || "Unknown Performer"} {media.durationSec ? `(${Math.floor(media.durationSec / 60)}:${(media.durationSec % 60).toString().padStart(2, "0")})` : ""}
             </div>
           </div>
-          <DownloadProgress
-            fileId={media.fileId}
-            fileName={media.title ? `${media.title}.mp3` : "audio.mp3"}
-            sizeBytes={1024 * 1024 * 4}
-            messageId={messageId}
-          />
+          <div className="media-download-slot">
+            <DownloadProgress
+              fileId={media.fileId}
+              fileName={media.title ? `${media.title}.mp3` : "audio.mp3"}
+              sizeBytes={1024 * 1024 * 4}
+              messageId={messageId}
+            />
+          </div>
         </div>
       );
 
@@ -113,7 +194,6 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
             <DownloadProgress
               fileId={media.fileId}
               fileName="voice_note.ogg"
-              sizeBytes={1024 * 128} // mock size 128KB
               messageId={messageId}
             />
           </div>
@@ -134,12 +214,14 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
               {media.mimeType || "application/octet-stream"}
             </div>
           </div>
-          <DownloadProgress
-            fileId={media.fileId}
-            fileName={media.fileName}
-            sizeBytes={media.sizeBytes}
-            messageId={messageId}
-          />
+          <div className="media-download-slot">
+            <DownloadProgress
+              fileId={media.fileId}
+              fileName={media.fileName}
+              sizeBytes={media.sizeBytes}
+              messageId={messageId}
+            />
+          </div>
         </div>
       );
 
@@ -147,9 +229,11 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: "4px", margin: "6px 0" }}>
           {media.thumbnailUrl ? (
-            <img
+            <AuthenticatedMediaImage
               src={media.thumbnailUrl}
               alt="Sticker"
+              reloadKey={reloadKey}
+              isPreparing={previewIsPreparing}
               style={{ width: "128px", height: "128px", objectFit: "contain" }}
             />
           ) : (
@@ -166,10 +250,12 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
         <div className="media-preview-container">
           <div style={{ position: "relative" }}>
             {media.thumbnailUrl && (
-              <img
+              <AuthenticatedMediaImage
                 src={media.thumbnailUrl}
                 alt="Animation/GIF"
                 className="media-image animate-pulse-slow"
+                reloadKey={reloadKey}
+                isPreparing={previewIsPreparing}
                 style={{ filter: "brightness(0.9)" }}
               />
             )}
@@ -189,11 +275,10 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
               GIF
             </span>
           </div>
-          <div style={{ padding: "8px", display: "flex", justifyContent: "flex-end" }}>
+          <div className="media-footer-download">
             <DownloadProgress
               fileId={media.fileId}
               fileName="animation.gif"
-              sizeBytes={1024 * 1024 * 2} // mock 2MB
               messageId={messageId}
             />
           </div>
@@ -230,12 +315,14 @@ export const MediaPreview: React.FC<MediaPreviewProps> = ({ media, messageId }) 
             <div style={{ fontSize: "0.85rem", fontWeight: "500" }}>{media.label || "Unknown Media Type"}</div>
           </div>
           {media.fileId && (
-            <DownloadProgress
-              fileId={media.fileId}
-              fileName="unknown_media"
-              sizeBytes={1024}
-              messageId={messageId}
-            />
+            <div className="media-download-slot">
+              <DownloadProgress
+                fileId={media.fileId}
+                fileName="unknown_media"
+                sizeBytes={1024}
+                messageId={messageId}
+              />
+            </div>
           )}
         </div>
       );

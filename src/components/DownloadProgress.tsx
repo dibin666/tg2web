@@ -1,6 +1,7 @@
 import React from "react";
 import { useApp } from "../context/AppContext";
-import { Download, CheckCircle, AlertCircle, Loader } from "lucide-react";
+import { downloadProxyFile } from "../api/client";
+import { Download, CheckCircle, AlertCircle, Loader, Pause, Play, Square } from "lucide-react";
 
 interface DownloadProgressProps {
   fileId: string;
@@ -10,9 +11,10 @@ interface DownloadProgressProps {
 }
 
 export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, fileName, sizeBytes, messageId }) => {
-  const { downloads, downloadMedia, t } = useApp();
+  const { downloads, downloadMedia, pauseDownload, resumeDownload, stopDownload, t } = useApp();
 
-  const activeDownload = downloads.find((d) => d.fileId === fileId);
+  const activeDownload = downloads.find((d) => d.fileId === fileId && (d.messageId || "") === (messageId || ""))
+    || downloads.find((d) => d.fileId === fileId);
 
   const formatBytes = (bytes?: number) => {
     if (!bytes) return "0 B";
@@ -26,9 +28,34 @@ export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, file
     downloadMedia(fileId, messageId, fileName, sizeBytes);
   };
 
+  const handlePause = () => {
+    if (activeDownload) void pauseDownload(activeDownload.id);
+  };
+
+  const handleResume = () => {
+    if (activeDownload) void resumeDownload(activeDownload.id);
+  };
+
+  const handleStop = () => {
+    if (activeDownload) void stopDownload(activeDownload.id);
+  };
+
+  const handleProxyDownload = async () => {
+    if (!activeDownload?.proxyUrl) {
+      handleDownload();
+      return;
+    }
+
+    try {
+      await downloadProxyFile(activeDownload.proxyUrl, activeDownload.fileName || fileName);
+    } catch (error) {
+      console.error("Proxy download failed", error);
+    }
+  };
+
   if (!activeDownload) {
     return (
-      <button className="btn-secondary" onClick={handleDownload} style={{ padding: "4px 8px", fontSize: "0.8rem", gap: "4px" }}>
+      <button className="btn-secondary download-action-button" onClick={handleDownload}>
         <Download size={12} />
         <span>{t("downloadBtn")} ({formatBytes(sizeBytes)})</span>
       </button>
@@ -42,49 +69,71 @@ export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, file
   switch (status) {
     case "queued":
       return (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+        <div className="download-progress download-progress-inline" onClick={(e) => e.stopPropagation()}>
           <Loader size={12} className="animate-pulse-slow" style={{ color: "var(--accent-blue)" }} />
-          <span>{t("statusPreparing")}</span>
+          <span className="download-progress-status">{t("statusPreparing")}</span>
+          <div className="download-progress-actions">
+            <button className="download-icon-button" onClick={handlePause} title={t("pauseBtn")} aria-label={t("pauseBtn")}>
+              <Pause size={12} />
+            </button>
+            <button className="download-icon-button danger" onClick={handleStop} title={t("stopBtn")} aria-label={t("stopBtn")}>
+              <Square size={11} />
+            </button>
+          </div>
         </div>
       );
 
     case "downloading":
       return (
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px", width: "100%", minWidth: "180px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: "500" }}>
-            <span>{t("statusDownloading")} {progressPercent}%</span>
-            <span>({formatBytes(downloadedBytes)} / {formatBytes(total)})</span>
+        <div className="download-progress" onClick={(e) => e.stopPropagation()}>
+          <div className="download-progress-meta">
+            <span className="download-progress-label">{t("statusDownloading")} {progressPercent}%</span>
+            <span className="download-progress-bytes">({formatBytes(downloadedBytes)} / {formatBytes(total)})</span>
           </div>
-          <div style={{ height: "4px", backgroundColor: "var(--border-color)", borderRadius: "2px", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${progressPercent}%`, backgroundColor: "var(--accent-blue)", transition: "width 0.25s cubic-bezier(0.25, 0.8, 0.25, 1)" }} />
+          <div className="download-progress-row">
+            <div className="download-progress-track">
+              <div className="download-progress-bar" style={{ width: `${progressPercent}%` }} />
+            </div>
+            <div className="download-progress-actions">
+              <button className="download-icon-button" onClick={handlePause} title={t("pauseBtn")} aria-label={t("pauseBtn")}>
+                <Pause size={12} />
+              </button>
+              <button className="download-icon-button danger" onClick={handleStop} title={t("stopBtn")} aria-label={t("stopBtn")}>
+                <Square size={11} />
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+
+    case "paused":
+      return (
+        <div className="download-progress download-progress-inline" onClick={(e) => e.stopPropagation()}>
+          <span className="download-progress-status">{t("statusPaused")}</span>
+          <span className="download-progress-bytes">({formatBytes(downloadedBytes)} / {formatBytes(total)})</span>
+          <div className="download-progress-actions">
+            <button className="download-icon-button" onClick={handleResume} title={t("resumeBtn")} aria-label={t("resumeBtn")}>
+              <Play size={12} />
+            </button>
+            <button className="download-icon-button danger" onClick={handleStop} title={t("stopBtn")} aria-label={t("stopBtn")}>
+              <Square size={11} />
+            </button>
           </div>
         </div>
       );
 
     case "ready":
       return (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }} onClick={(e) => e.stopPropagation()}>
-          <span style={{ color: "var(--accent-green)", fontSize: "0.8rem", fontWeight: "600", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+        <div className="download-progress-inline" onClick={(e) => e.stopPropagation()}>
+          <span className="download-ready-status">
             <CheckCircle size={14} />
             <span>{t("savedStatusShort")}</span>
           </span>
           <button
-            onClick={handleDownload}
+            className="download-icon-button"
+            onClick={handleProxyDownload}
             title={t("downloadAgainTooltip")}
-            style={{
-              color: "var(--accent-blue)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "4px",
-              borderRadius: "4px",
-              border: "1px solid var(--border-color)",
-              backgroundColor: "white",
-              transition: "var(--transition-smooth)",
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--bg-app)"}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "white"}
+            aria-label={t("downloadAgainTooltip")}
           >
             <Download size={11} />
           </button>
@@ -93,10 +142,20 @@ export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, file
 
     case "failed":
       return (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--accent-red)" }} onClick={(e) => e.stopPropagation()}>
+        <div className="download-progress-inline download-error-status" onClick={(e) => e.stopPropagation()}>
           <AlertCircle size={12} />
           <span title={error || t("statusFailed")}>{t("statusFailed")}</span>
-          <button onClick={handleDownload} style={{ color: "var(--accent-blue)", textDecoration: "underline", fontSize: "0.75rem", cursor: "pointer" }}>
+          <button className="download-link-button" onClick={handleResume}>
+            {t("retryBtn")}
+          </button>
+        </div>
+      );
+
+    case "stopped":
+      return (
+        <div className="download-progress-inline" onClick={(e) => e.stopPropagation()}>
+          <span className="download-progress-status">{t("statusStopped")}</span>
+          <button className="download-link-button" onClick={handleResume}>
             {t("retryBtn")}
           </button>
         </div>
@@ -104,9 +163,9 @@ export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, file
 
     case "expired":
       return (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "var(--text-muted)" }} onClick={(e) => e.stopPropagation()}>
+        <div className="download-progress-inline" onClick={(e) => e.stopPropagation()}>
           <span>{t("expiredStatus")}</span>
-          <button onClick={handleDownload} style={{ color: "var(--accent-blue)", textDecoration: "underline", fontSize: "0.75rem", cursor: "pointer" }}>
+          <button className="download-link-button" onClick={handleDownload}>
             {t("refetchBtn")}
           </button>
         </div>

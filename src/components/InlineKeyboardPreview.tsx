@@ -1,7 +1,10 @@
 import React, { useState } from "react";
 import { AlertCircle } from "lucide-react";
+import { apiClient } from "../api/client";
 
 interface InlineKeyboardPreviewProps {
+  botId: string;
+  messageId: string;
   keyboard?: {
     inline_keyboard: Array<Array<{
       text: string;
@@ -11,20 +14,30 @@ interface InlineKeyboardPreviewProps {
   };
 }
 
-export const InlineKeyboardPreview: React.FC<InlineKeyboardPreviewProps> = ({ keyboard }) => {
+export const InlineKeyboardPreview: React.FC<InlineKeyboardPreviewProps> = ({ botId, messageId, keyboard }) => {
   const [toast, setToast] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   if (!keyboard || !keyboard.inline_keyboard || keyboard.inline_keyboard.length === 0) {
     return null;
   }
 
-  const handleButtonClick = (button: { text: string; url?: string; callback_data?: string }) => {
+  const handleButtonClick = async (button: { text: string; url?: string; callback_data?: string }, key: string) => {
     if (button.url) {
-      // Simulate url redirect (we can open it in a new window or just alert)
-      setToast(`Redirecting to URL: ${button.url}`);
+      window.open(button.url, "_blank", "noopener,noreferrer");
+      return;
     } else if (button.callback_data) {
-      // Simulate callback click (bot payload event)
-      setToast(`Callback trigger fired: [${button.callback_data}]`);
+      try {
+        setBusyKey(key);
+        const response = await apiClient.clickInlineKeyboardButton(botId, messageId, {
+          callbackData: button.callback_data,
+        });
+        setToast(response.text || "Button sent");
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : "Button failed");
+      } finally {
+        setBusyKey(null);
+      }
     } else {
       setToast("Button clicked");
     }
@@ -43,8 +56,9 @@ export const InlineKeyboardPreview: React.FC<InlineKeyboardPreviewProps> = ({ ke
               key={btnIdx}
               onClick={(e) => {
                 e.stopPropagation();
-                handleButtonClick(btn);
+                void handleButtonClick(btn, `${rowIdx}:${btnIdx}`);
               }}
+              disabled={busyKey !== null}
               style={{
                 flex: 1,
                 minWidth: "60px",
@@ -55,7 +69,7 @@ export const InlineKeyboardPreview: React.FC<InlineKeyboardPreviewProps> = ({ ke
                 borderRadius: "6px",
                 fontSize: "0.8rem",
                 fontWeight: "500",
-                cursor: "pointer",
+                cursor: busyKey === null ? "pointer" : "wait",
                 textAlign: "center",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -71,7 +85,7 @@ export const InlineKeyboardPreview: React.FC<InlineKeyboardPreviewProps> = ({ ke
                 e.currentTarget.style.borderColor = "var(--border-color)";
               }}
             >
-              {btn.text}
+              {busyKey === `${rowIdx}:${btnIdx}` ? "..." : btn.text}
               {btn.url && " ↗"}
             </button>
           ))}

@@ -1,18 +1,67 @@
 import React, { useState, useRef } from "react";
 import { useApp } from "../context/AppContext";
+import { apiClient } from "../api/client";
+import { BotCommand } from "../api/types";
 import { Send, Paperclip, Terminal, AlertOctagon } from "lucide-react";
 
 export const MessageComposer: React.FC = () => {
   const { sendMessage, connectionStatus, bots, activeBotId, t } = useApp();
   const [text, setText] = useState("");
   const [showCommands, setShowCommands] = useState(false);
-  const [showUploadMock, setShowUploadMock] = useState(false);
+  const [commands, setCommands] = useState<BotCommand[]>([]);
+  const [commandsBotId, setCommandsBotId] = useState<string | null>(null);
+  const [commandsLoading, setCommandsLoading] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const activeBotIdRef = useRef(activeBotId);
+
+  React.useEffect(() => {
+    activeBotIdRef.current = activeBotId;
+  }, [activeBotId]);
 
   const activeBot = bots.find((b) => b.id === activeBotId);
   const isOffline = connectionStatus === "offline";
   const isRestricted = activeBot?.status === "restricted";
   const isDisabled = isOffline || isRestricted || !text.trim();
+  const visibleCommands = commandsBotId === activeBotId ? commands : [];
+
+  const requestCommands = React.useCallback(async (botId: string, retryIfEmpty: boolean) => {
+    try {
+      setCommandsLoading(true);
+      const fetchedCommands = await apiClient.getBotCommands(botId);
+      if (activeBotIdRef.current !== botId) return;
+
+      setCommands(fetchedCommands);
+      setCommandsBotId(botId);
+
+      if (retryIfEmpty && fetchedCommands.length === 0) {
+        window.setTimeout(() => {
+          if (activeBotIdRef.current !== botId) return;
+          void apiClient.getBotCommands(botId).then((lateCommands) => {
+            if (activeBotIdRef.current !== botId) return;
+            setCommands(lateCommands);
+            setCommandsBotId(botId);
+          }).catch((error) => {
+            console.error("Failed to refresh bot commands", error);
+          });
+        }, 800);
+      }
+    } catch (error) {
+      console.error("Failed to load bot commands", error);
+      if (activeBotIdRef.current === botId) {
+        setCommands([]);
+        setCommandsBotId(botId);
+      }
+    } finally {
+      if (activeBotIdRef.current === botId) {
+        setCommandsLoading(false);
+      }
+    }
+  }, []);
+
+  const loadCommands = React.useCallback(() => {
+    if (!activeBotId) return;
+    void requestCommands(activeBotId, commandsBotId !== activeBotId);
+  }, [activeBotId, commandsBotId, requestCommands]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,32 +89,22 @@ export const MessageComposer: React.FC = () => {
     // Show bot commands popup if text starts with '/' or ends with '/'
     if (val === "/" || val.endsWith(" /")) {
       setShowCommands(true);
+      loadCommands();
     } else {
       setShowCommands(false);
     }
   };
 
   const insertCommand = (cmd: string) => {
-    setText(cmd + " ");
+    const command = cmd.startsWith("/") ? cmd : `/${cmd}`;
+    setText((current) => {
+      if (current === "/") return `${command} `;
+      if (current.endsWith(" /")) return `${current.slice(0, -1)}${command} `;
+      return `${current}${current.endsWith(" ") ? "" : " "}${command} `;
+    });
     setShowCommands(false);
     inputRef.current?.focus();
   };
-
-  const triggerUpload = () => {
-    setShowUploadMock(true);
-    setTimeout(() => {
-      setShowUploadMock(false);
-    }, 2500);
-  };
-
-  // Mock bot command shortcuts
-  const mockCommands = [
-    { name: "/help", desc: t("helpDesc") },
-    { name: "/status", desc: t("statusDesc") },
-    { name: "/schedule", desc: t("scheduleDesc") },
-    { name: "/download_all", desc: t("downloadDesc") },
-    { name: "/reset", desc: t("resetDesc") },
-  ];
 
   if (isRestricted) {
     return (
@@ -133,13 +172,38 @@ export const MessageComposer: React.FC = () => {
             <Terminal size={12} />
             <span>{t("availableCommands")}</span>
           </div>
-          {mockCommands.map((cmd) => (
+          {commandsLoading && visibleCommands.length === 0 && (
             <div
-              key={cmd.name}
-              onClick={() => insertCommand(cmd.name)}
+              style={{
+                padding: "10px 12px",
+                fontSize: "0.78rem",
+                color: "var(--text-secondary)",
+              }}
+            >
+              {t("commandsLoading")}
+            </div>
+          )}
+          {!commandsLoading && visibleCommands.length === 0 && (
+            <div
+              style={{
+                padding: "10px 12px",
+                fontSize: "0.78rem",
+                color: "var(--text-secondary)",
+              }}
+            >
+              {t("commandsEmpty")}
+            </div>
+          )}
+          {visibleCommands.map((cmd) => {
+            const commandName = `/${cmd.command.replace(/^\//, "")}`;
+            return (
+            <div
+              key={commandName}
+              onClick={() => insertCommand(commandName)}
               style={{
                 display: "flex",
                 justifyContent: "space-between",
+                gap: "12px",
                 padding: "8px 12px",
                 fontSize: "0.8rem",
                 cursor: "pointer",
@@ -149,39 +213,14 @@ export const MessageComposer: React.FC = () => {
               onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
             >
               <span style={{ color: "var(--accent-blue)", fontFamily: "var(--font-mono)", fontWeight: "600" }}>
-                {cmd.name}
+                {commandName}
               </span>
-              <span style={{ color: "var(--text-secondary)", fontSize: "0.75rem" }}>
-                {cmd.desc}
+              <span style={{ color: "var(--text-secondary)", fontSize: "0.75rem", textAlign: "right" }}>
+                {cmd.description}
               </span>
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Upload mock dialog */}
-      {showUploadMock && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: "100%",
-            left: "50%",
-            transform: "translateX(-50%) translateY(-10px)",
-            backgroundColor: "var(--bg-panel)",
-            border: "1px solid var(--border-color)",
-            padding: "10px 16px",
-            borderRadius: "8px",
-            fontSize: "0.8rem",
-            color: "var(--accent-green)",
-            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.05)",
-            zIndex: 10,
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-          }}
-        >
-          <Paperclip size={14} className="animate-pulse-slow" />
-          <span>{t("attachmentMock")}</span>
+            );
+          })}
         </div>
       )}
 
@@ -189,15 +228,14 @@ export const MessageComposer: React.FC = () => {
         {/* Attachment Pin */}
         <button
           type="button"
-          onClick={triggerUpload}
-          disabled={isOffline}
+          disabled
           style={{
             padding: "8px",
             borderRadius: "6px",
             backgroundColor: "transparent",
             border: "1px solid var(--border-color)",
-            color: isOffline ? "var(--text-muted)" : "var(--text-secondary)",
-            cursor: isOffline ? "not-allowed" : "pointer",
+            color: "var(--text-muted)",
+            cursor: "not-allowed",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -205,9 +243,7 @@ export const MessageComposer: React.FC = () => {
             width: "38px",
             transition: "all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1)",
           }}
-          onMouseEnter={(e) => !isOffline && (e.currentTarget.style.backgroundColor = "var(--bg-app)")}
-          onMouseLeave={(e) => !isOffline && (e.currentTarget.style.backgroundColor = "transparent")}
-          title={t("attachTooltip")}
+          title={t("attachmentUnavailable")}
         >
           <Paperclip size={18} />
         </button>

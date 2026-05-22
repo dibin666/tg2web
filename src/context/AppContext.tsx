@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { mockApiClient, simulateDraftStream, simulateDraftExpiry, simulateMessageEdit, simulateFailedSend, simulateConnectionStatusToggle, simulateIncomingFileEvent } from "../api/mock";
-import { BotSummary, ChatMessage, PendingDraft, DownloadItem, Settings, AppEvent, WorkspaceFile, AccessKey } from "../api/types";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { apiClient, authApiClient, clearAuthToken, getAuthToken, setAuthToken } from "../api/client";
+import { AppEvent, AuthRole, BotSummary, ChatMessage, DownloadItem, PendingDraft, Settings, WorkspaceFile } from "../api/types";
 
 const translations = {
   zh: {
@@ -29,12 +29,14 @@ const translations = {
     restrictedChat: "会话受限: 共享 Telegram 服务账号被禁止向该 Bot 发送消息。",
     typePrompt: "输入消息内容 (使用 / 呼出快捷命令)...",
     availableCommands: "可用快捷命令",
+    commandsLoading: "正在读取机器人指令...",
+    commandsEmpty: "该机器人没有公开指令",
     helpDesc: "获取机器人使用帮助",
     statusDesc: "显示连接和 TDLib 状态",
     scheduleDesc: "访问共享日历日程",
     downloadDesc: "获取完整报告文件",
     resetDesc: "清除中间提示词上下文",
-    attachmentMock: "附件上传模拟触发成功！",
+    attachmentUnavailable: "附件上传暂未启用",
     attachTooltip: "添加附件占位符",
     send: "发送",
     
@@ -74,7 +76,12 @@ const translations = {
     statusDownloading: "下载中...",
     statusSaved: "✓ 已保存到本地",
     statusFailed: "下载失败",
+    statusPaused: "已暂停",
+    statusStopped: "已停止",
     downloadBtn: "下载",
+    pauseBtn: "暂停",
+    resumeBtn: "继续",
+    stopBtn: "停止",
     retryBtn: "重试",
     refetchBtn: "重新获取",
     expiredStatus: "已过期",
@@ -100,9 +107,13 @@ const translations = {
     retentionPermanent: "永久 (保留历史)",
     localFileCaching: "本地文件缓存",
     storeDownloadsLocally: "在服务器磁盘本地存储下载的文件",
+    clearDownloadCacheTitle: "本地下载缓存",
+    clearDownloadCacheDesc: "删除服务器代理缓存中的已下载文件。消息记录会保留，文件可重新下载。",
+    clearDownloadCacheBtn: "删除所有本地下载缓存",
+    clearDownloadCacheDone: "已删除 {files} 个缓存文件，释放 {bytes}，{downloads} 条下载记录已标记为过期。",
     developerOptions: "开发者选项",
     devDebugMode: "开发者调试模式",
-    exposesDecksLogs: "显示 WebSocket 模拟器控制面板和日志流",
+    exposesDecksLogs: "显示后端事件日志和调试状态",
     
     // User Access Keys
     accessKeyLabel: "访问密钥 (Access Key)",
@@ -145,12 +156,14 @@ const translations = {
     restrictedChat: "Conversation Restricted: The shared Telegram service account is barred from sending messages to this bot.",
     typePrompt: "Type a prompt for the bot (use / for shortcuts)...",
     availableCommands: "AVAILABLE COMMAND SHUTTLES",
+    commandsLoading: "Loading bot commands...",
+    commandsEmpty: "This bot exposes no commands",
     helpDesc: "Get bot help instructions",
     statusDesc: "Show connection and TDLib status",
     scheduleDesc: "Access the shared calendar scheduler",
     downloadDesc: "Fetch complete report files",
     resetDesc: "Clear intermediate prompt contexts",
-    attachmentMock: "Attachment Uploader Scaffolding Mock Triggered!",
+    attachmentUnavailable: "Attachment upload is not enabled yet",
     attachTooltip: "Attach media/file placeholder",
     send: "Send",
     
@@ -202,16 +215,25 @@ const translations = {
     retentionPermanent: "Permanent (Audit history)",
     localFileCaching: "Local File Caching",
     storeDownloadsLocally: "Store downloads locally on server disk",
+    clearDownloadCacheTitle: "Local Download Cache",
+    clearDownloadCacheDesc: "Delete downloaded files from the server proxy cache. Message history stays available and files can be downloaded again.",
+    clearDownloadCacheBtn: "Delete all local download cache",
+    clearDownloadCacheDone: "Deleted {files} cached files, freed {bytes}, and marked {downloads} downloads expired.",
     developerOptions: "DEVELOPER OPTIONS",
     devDebugMode: "Developer Debug Mode",
-    exposesDecksLogs: "Exposes WebSocket simulator decks and log feeds",
+    exposesDecksLogs: "Shows backend event logs and diagnostic state",
     
     // DownloadProgress
     statusPreparing: "Preparing download...",
     statusDownloading: "Downloading...",
     statusSaved: "✓ Saved to local",
     statusFailed: "Download failed",
+    statusPaused: "Paused",
+    statusStopped: "Stopped",
     downloadBtn: "Download",
+    pauseBtn: "Pause",
+    resumeBtn: "Resume",
+    stopBtn: "Stop",
     retryBtn: "Retry",
     refetchBtn: "Refetch",
     expiredStatus: "Expired",
@@ -237,6 +259,136 @@ const translations = {
 
 export type TxKey = keyof typeof translations['en'];
 
+const messagesReferToSameTelegramMessage = (left: ChatMessage, right: ChatMessage) =>
+  Boolean(left.telegramMessageId && right.telegramMessageId && left.telegramMessageId === right.telegramMessageId);
+
+const SEND_CONFIRMATION_DEDUPE_WINDOW_MS = 30_000;
+
+const messageTimestamp = (message: ChatMessage) => {
+  const timestamp = Date.parse(message.createdAt);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const chooseEarlierCreatedAt = (left: ChatMessage, right: ChatMessage) => {
+  const leftTimestamp = messageTimestamp(left);
+  const rightTimestamp = messageTimestamp(right);
+  if (!leftTimestamp) return right.createdAt;
+  if (!rightTimestamp) return left.createdAt;
+  return leftTimestamp <= rightTimestamp ? left.createdAt : right.createdAt;
+};
+
+const messageStatusPriority: Record<ChatMessage["status"], number> = {
+  pending: 0,
+  received: 1,
+  sent: 2,
+  edited: 3,
+  failed: 4,
+  deleted: 5,
+};
+
+const chooseMessageStatus = (left: ChatMessage, right: ChatMessage) =>
+  messageStatusPriority[right.status] >= messageStatusPriority[left.status]
+    ? right.status
+    : left.status;
+
+const isClientRequestMessageId = (messageId: string) => messageId.startsWith("req_");
+
+const chooseMessageId = (left: ChatMessage, right: ChatMessage) => {
+  if (isClientRequestMessageId(left.id)) return left.id;
+  if (isClientRequestMessageId(right.id)) return right.id;
+  return right.id || left.id;
+};
+
+const messagesHaveCompatibleInternalSender = (left: ChatMessage, right: ChatMessage) =>
+  !left.sentByInternalUser?.id
+  || !right.sentByInternalUser?.id
+  || left.sentByInternalUser.id === right.sentByInternalUser.id;
+
+const messagesHaveCompatibleMediaShape = (left: ChatMessage, right: ChatMessage) =>
+  (left.media?.length || 0) === (right.media?.length || 0);
+
+const messagesHaveCompatibleTelegramIdsForRenderedSend = (left: ChatMessage, right: ChatMessage) =>
+  Boolean(left.telegramMessageId) !== Boolean(right.telegramMessageId)
+  || Boolean(left.telegramMessageId && right.telegramMessageId && (left.status === "pending" || right.status === "pending"));
+
+const messagesLookLikeSameRenderedSend = (left: ChatMessage, right: ChatMessage) =>
+  left.botId === right.botId
+  && left.direction === right.direction
+  && left.direction === "outgoing"
+  && messagesHaveCompatibleTelegramIdsForRenderedSend(left, right)
+  && (left.text || "") === (right.text || "")
+  && (left.replyToMessageId || "") === (right.replyToMessageId || "")
+  && messagesHaveCompatibleInternalSender(left, right)
+  && messagesHaveCompatibleMediaShape(left, right)
+  && Math.abs(messageTimestamp(left) - messageTimestamp(right)) <= SEND_CONFIRMATION_DEDUPE_WINDOW_MS
+  && (
+    left.status === "pending"
+    || right.status === "pending"
+    || left.status === "sent"
+    || right.status === "sent"
+    || left.status === "edited"
+    || right.status === "edited"
+  );
+
+const messagesRepresentSameLogicalMessage = (left: ChatMessage, right: ChatMessage) =>
+  left.id === right.id
+  || messagesReferToSameTelegramMessage(left, right)
+  || messagesLookLikeSameRenderedSend(left, right);
+
+const compareMessages = (left: ChatMessage, right: ChatMessage) => {
+  const byTime = messageTimestamp(left) - messageTimestamp(right);
+  return byTime || left.id.localeCompare(right.id);
+};
+
+const mergeMessage = (existing: ChatMessage, incoming: ChatMessage): ChatMessage => ({
+  ...existing,
+  ...incoming,
+  id: chooseMessageId(existing, incoming),
+  telegramMessageId: incoming.telegramMessageId ?? existing.telegramMessageId,
+  text: incoming.text ?? existing.text,
+  entities: incoming.entities.length > 0 ? incoming.entities : existing.entities,
+  sentByInternalUser: incoming.sentByInternalUser ?? existing.sentByInternalUser,
+  media: incoming.media ?? existing.media,
+  status: chooseMessageStatus(existing, incoming),
+  createdAt: chooseEarlierCreatedAt(existing, incoming),
+  editedAt: incoming.editedAt ?? existing.editedAt,
+  replyToMessageId: incoming.replyToMessageId ?? existing.replyToMessageId,
+  rawAvailable: incoming.rawAvailable ?? existing.rawAvailable,
+  inlineKeyboard: incoming.inlineKeyboard ?? existing.inlineKeyboard,
+});
+
+const upsertMessageOnce = (messages: ChatMessage[], incoming: ChatMessage) => {
+  const matchingMessages = messages.filter((message) => messagesRepresentSameLogicalMessage(message, incoming));
+  if (matchingMessages.length === 0) return [...messages, incoming];
+
+  const mergedMessage = [...matchingMessages, incoming]
+    .sort(compareMessages)
+    .reduce((current, message) => mergeMessage(current, message));
+  const remainingMessages = messages.filter((message) => !messagesRepresentSameLogicalMessage(message, incoming));
+
+  return [...remainingMessages, mergedMessage];
+};
+
+const normalizeMessages = (messages: ChatMessage[]) =>
+  [...messages]
+    .sort(compareMessages)
+    .reduce<ChatMessage[]>((current, message) => upsertMessageOnce(current, message), [])
+    .sort(compareMessages);
+
+const upsertMessage = (messages: ChatMessage[], incoming: ChatMessage) =>
+  normalizeMessages([...messages, incoming]);
+
+const mergeDownload = (downloads: DownloadItem[], incoming: DownloadItem) => {
+  const sameScope = (download: DownloadItem) =>
+    download.id === incoming.id
+    || (download.fileId === incoming.fileId && (download.messageId || "") === (incoming.messageId || ""));
+
+  return [incoming, ...downloads.filter((download) => !sameScope(download))];
+};
+
+const clientRequestId = () =>
+  `req_${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
+
 interface AppContextType {
   bots: BotSummary[];
   messages: ChatMessage[];
@@ -249,10 +401,8 @@ interface AppContextType {
   settings: Settings | null;
   loading: boolean;
   workspaceFiles: WorkspaceFile[];
-  userRole: "admin" | "user" | null;
+  userRole: AuthRole | null;
   language: "zh" | "en";
-  accessKeys: AccessKey[];
-  activeUserKey: string | null;
   
   selectBot: (botId: string) => void;
   sendMessage: (text: string, replyToMessageId?: string) => Promise<void>;
@@ -262,12 +412,12 @@ interface AppContextType {
   clearEventLog: () => void;
   updateFileStatus: (fileId: string, status: "pending" | "approved" | "rejected") => Promise<void>;
   updateFileTag: (fileId: string, tag: string) => Promise<void>;
-  triggerSimulation: (type: "draft_stream" | "draft_expiry" | "msg_edit" | "failed_send" | "connection" | "file_new") => void;
-  login: (role: "admin" | "user", credential?: string) => boolean;
+  login: (role: AuthRole, credential?: string) => Promise<boolean>;
   logout: () => void;
+  pauseDownload: (downloadId: string) => Promise<void>;
+  resumeDownload: (downloadId: string) => Promise<void>;
+  stopDownload: (downloadId: string) => Promise<void>;
   t: (key: TxKey) => string;
-  generateAccessKey: (name: string) => void;
-  revokeAccessKey: (id: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -277,16 +427,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [messagesMap, setMessagesMap] = useState<Record<string, ChatMessage[]>>({});
   const [pendingDrafts, setPendingDrafts] = useState<PendingDraft[]>([]);
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
-  const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "reconnecting" | "offline">("connected");
+  const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "reconnecting" | "offline">("connecting");
   const [activeBotId, setActiveBotId] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessageState] = useState<ChatMessage | null>(null);
   const [eventLog, setEventLog] = useState<AppEvent[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
+  const activeBotIdRef = useRef<string | null>(null);
 
   // Persistent Role & i18n States
-  const [userRole, setUserRole] = useState<"admin" | "user" | null>(() => {
+  const [userRole, setUserRole] = useState<AuthRole | null>(() => {
     const saved = localStorage.getItem("tg2web_user_role");
     return (saved === "admin" || saved === "user") ? saved : null;
   });
@@ -296,138 +447,128 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return browserLang.startsWith("zh") ? "zh" : "en";
   });
 
-  const [accessKeys, setAccessKeys] = useState<AccessKey[]>(() => {
-    const saved = localStorage.getItem("tg2web_access_keys");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse access keys", e);
-      }
+  useEffect(() => {
+    activeBotIdRef.current = activeBotId;
+  }, [activeBotId]);
+
+  const loadBackendData = useCallback(async () => {
+    const botsList = await apiClient.getBots();
+    setBots(botsList);
+
+    const msgs: Record<string, ChatMessage[]> = {};
+    for (const bot of botsList) {
+      msgs[bot.id] = normalizeMessages(await apiClient.getMessages(bot.id));
     }
-    const defaultKeys: AccessKey[] = [
-      { id: "key_1", key: "tg_usr_k8s9p2q1r0s7t6", name: "FrontDesk-01", createdAt: new Date().toISOString() },
-      { id: "key_2", key: "tg_usr_m3n4o5p6q7r8s9", name: "Billing-02", createdAt: new Date().toISOString() },
-    ];
-    localStorage.setItem("tg2web_access_keys", JSON.stringify(defaultKeys));
-    return defaultKeys;
-  });
+    setMessagesMap(msgs);
 
-  const [activeUserKey, setActiveUserKey] = useState<string | null>(() => {
-    return localStorage.getItem("tg2web_active_user_key");
-  });
+    const dls = await apiClient.getDownloads();
+    setDownloads(dls);
 
-  const generateAccessKey = useCallback((name: string) => {
-    const rand = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
-    const newKey: AccessKey = {
-      id: `key_${Date.now()}`,
-      key: `tg_usr_${rand}`,
-      name,
-      createdAt: new Date().toISOString(),
-    };
-    setAccessKeys((prev) => {
-      const next = [...prev, newKey];
-      localStorage.setItem("tg2web_access_keys", JSON.stringify(next));
-      return next;
-    });
+    const sets = await apiClient.getSettings();
+    setSettings(sets);
+
+    const filesList = await apiClient.getWorkspaceFiles();
+    setWorkspaceFiles(filesList);
+
+    setActiveBotId((current) => current || botsList[0]?.id || null);
   }, []);
 
-  const revokeAccessKey = useCallback((id: string) => {
-    setAccessKeys((prev) => {
-      const next = prev.filter((k) => k.id !== id);
-      localStorage.setItem("tg2web_access_keys", JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const login = useCallback(async (role: AuthRole, credential?: string) => {
+    try {
+      const response = role === "admin"
+        ? await authApiClient.loginAdmin({ password: credential || "" })
+        : await authApiClient.loginAccessKey({ accessKey: credential || "" });
 
-  const login = useCallback((role: "admin" | "user", credential?: string) => {
-    if (role === "admin") {
-      if (credential === "123456") {
-        setUserRole("admin");
-        localStorage.setItem("tg2web_user_role", "admin");
-        return true;
-      }
-      return false;
-    } else {
-      let matchedKey: AccessKey | undefined;
-      setAccessKeys((prev) => {
-        const found = prev.find((k) => k.key === credential);
-        if (found) {
-          matchedKey = found;
-          const next = prev.map((k) =>
-            k.id === found.id
-              ? { ...k, lastLoginAt: new Date().toISOString() }
-              : k
-          );
-          localStorage.setItem("tg2web_access_keys", JSON.stringify(next));
-          return next;
-        }
-        return prev;
-      });
-
-      if (matchedKey) {
-        setUserRole("user");
-        localStorage.setItem("tg2web_user_role", "user");
-        setActiveUserKey(matchedKey.name);
-        localStorage.setItem("tg2web_active_user_key", matchedKey.name);
-        return true;
-      }
+      setAuthToken(response.token);
+      setUserRole(response.user.role);
+      localStorage.setItem("tg2web_user_role", response.user.role);
+      setConnectionStatus("connecting");
+      await loadBackendData();
+      return true;
+    } catch (error) {
+      console.error("Login failed", error);
+      clearAuthToken();
+      setUserRole(null);
+      localStorage.removeItem("tg2web_user_role");
       return false;
     }
+  }, [loadBackendData]);
+
+  const clearSessionState = useCallback(() => {
+    setBots([]);
+    setMessagesMap({});
+    setPendingDrafts([]);
+    setDownloads([]);
+    setActiveBotId(null);
+    setSelectedMessageState(null);
+    setEventLog([]);
+    setSettings(null);
+    setWorkspaceFiles([]);
+    setConnectionStatus("offline");
   }, []);
 
   const logout = useCallback(() => {
+    clearAuthToken();
     setUserRole(null);
     localStorage.removeItem("tg2web_user_role");
-    setActiveUserKey(null);
-    localStorage.removeItem("tg2web_active_user_key");
-  }, []);
+    clearSessionState();
+  }, [clearSessionState]);
 
   const t = useCallback((key: TxKey) => {
     const langData = translations[language] || translations["en"];
     return langData[key] || translations["en"][key] || String(key);
   }, [language]);
 
-  // Fetch initial data
+  // Restore persisted backend session, then fetch initial data.
   useEffect(() => {
+    let cancelled = false;
+
     const init = async () => {
+      const token = getAuthToken();
+      if (!token) {
+        clearAuthToken();
+        localStorage.removeItem("tg2web_user_role");
+        setUserRole(null);
+        clearSessionState();
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
-        const botsList = await mockApiClient.getBots();
-        setBots(botsList);
-        
-        // Load initial messages for all bots
-        const msgs: Record<string, ChatMessage[]> = {};
-        for (const bot of botsList) {
-          msgs[bot.id] = await mockApiClient.getMessages(bot.id);
+        const me = await apiClient.getMe();
+        if (!me.role) {
+          throw new Error("Session response did not include a role");
         }
-        setMessagesMap(msgs);
-
-        const dls = await mockApiClient.getDownloads();
-        setDownloads(dls);
-
-        const sets = await mockApiClient.getSettings();
-        setSettings(sets);
-
-        const filesList = await mockApiClient.getWorkspaceFiles();
-        setWorkspaceFiles(filesList);
-
-        // Auto select first bot
-        if (botsList.length > 0) {
-          setActiveBotId(botsList[0].id);
+        if (!cancelled) {
+          setUserRole(me.role);
+          localStorage.setItem("tg2web_user_role", me.role);
+          await loadBackendData();
         }
       } catch (e) {
-        console.error("Failed to initialize mock client data", e);
+        console.error("Failed to initialize backend data", e);
+        clearAuthToken();
+        localStorage.removeItem("tg2web_user_role");
+        if (!cancelled) {
+          setUserRole(null);
+          clearSessionState();
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    init();
-  }, []);
 
-  // Listen to WebSocket mock events
+    init();
+    return () => {
+      cancelled = true;
+    };
+  }, [clearSessionState, loadBackendData]);
+
+  // Listen to backend WebSocket events
   useEffect(() => {
-    const unsubscribe = mockApiClient.subscribeToEvents((event: AppEvent) => {
+    if (!userRole || !getAuthToken()) return;
+
+    const unsubscribe = apiClient.subscribeToEvents((event: AppEvent) => {
       // Append to raw Event Log Panel
       setEventLog((prev) => [event, ...prev].slice(0, 100)); // limit to 100 events
 
@@ -438,17 +579,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setConnectionStatus(event.status);
           break;
 
+        case "telegram.auth_state":
+          break;
+
+        case "bot.published":
+        case "bot.updated":
+          setBots((prevBots) => {
+            const exists = prevBots.some((bot) => bot.id === event.bot.id);
+            return exists
+              ? prevBots.map((bot) => (bot.id === event.bot.id ? event.bot : bot))
+              : [...prevBots, event.bot];
+          });
+          break;
+
+        case "bot.unpublished":
+          setBots((prevBots) => prevBots.filter((bot) => bot.id !== event.botId));
+          break;
+
         case "message.new":
-          if (botId) {
+          if (botId && event.message.botId === botId) {
             setMessagesMap((prev) => {
               const currentList = prev[botId] || [];
-              // Avoid duplicates
-              const exists = currentList.some((m) => m.id === event.message.id);
-              const updatedList = exists
-                ? currentList.map((m) => (m.id === event.message.id ? event.message : m))
-                : [...currentList, event.message];
-
-              return { ...prev, [botId]: updatedList };
+              return { ...prev, [botId]: upsertMessage(currentList, event.message) };
             });
 
             // Update bot summary preview & unread count
@@ -458,7 +610,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   return {
                     ...b,
                     lastMessagePreview: event.message.text || "[Media/Attachment]",
-                    unreadCount: activeBotId === botId ? 0 : b.unreadCount + (event.message.direction === "incoming" ? 1 : 0),
+                    unreadCount: activeBotIdRef.current === botId ? 0 : b.unreadCount + (event.message.direction === "incoming" ? 1 : 0),
                   };
                 }
                 return b;
@@ -468,13 +620,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           break;
 
         case "message.edited":
-          if (botId) {
+          if (botId && event.message.botId === botId) {
             setMessagesMap((prev) => {
               const currentList = prev[botId] || [];
-              const updatedList = currentList.map((m) =>
-                m.id === event.message.id ? event.message : m
-              );
-              return { ...prev, [botId]: updatedList };
+              return { ...prev, [botId]: upsertMessage(currentList, event.message) };
             });
 
             // Sync with Inspector if selected
@@ -492,9 +641,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setMessagesMap((prev) => {
               const currentList = prev[botId] || [];
               const updatedList = currentList.map((m) =>
-                m.id === event.messageId ? { ...m, status: "deleted" as const, text: "[Message deleted]" } : m
+                m.id === event.messageId || m.telegramMessageId === event.messageId
+                  ? { ...m, status: "deleted" as const, text: "[Message deleted]" }
+                  : m
               );
-              return { ...prev, [botId]: updatedList };
+              return { ...prev, [botId]: normalizeMessages(updatedList) };
             });
           }
           break;
@@ -505,11 +656,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               const currentList = prev[botId] || [];
               return {
                 ...prev,
-                [botId]: currentList.map((m) =>
-                  m.id === event.clientRequestId || m.id.startsWith("msg_client_")
+                [botId]: normalizeMessages(currentList.map((m) =>
+                  m.id === event.clientRequestId
                     ? { ...m, status: "sent" as const, telegramMessageId: event.messageId }
                     : m
-                ),
+                )),
               };
             });
           }
@@ -521,11 +672,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               const currentList = prev[botId] || [];
               return {
                 ...prev,
-                [botId]: currentList.map((m) =>
-                  m.id.startsWith("msg_client_") // find the pending outgoing message
+                [botId]: normalizeMessages(currentList.map((m) =>
+                  m.id === event.clientRequestId
                     ? { ...m, status: "failed" as const }
                     : m
-                ),
+                )),
               };
             });
           }
@@ -533,50 +684,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         case "draft.pending":
           setPendingDrafts((prev) => {
-            const filtered = prev.filter((d) => d.draftId !== event.draft.draftId);
+            const filtered = prev.filter((d) => !(d.botId === event.draft.botId && d.draftId === event.draft.draftId));
             return [...filtered, event.draft];
           });
           break;
 
         case "draft.expired":
-          setPendingDrafts((prev) => prev.filter((d) => d.draftId !== event.draftId));
+          setPendingDrafts((prev) => prev.filter((d) => !(d.botId === botId && d.draftId === event.draftId)));
           break;
 
         case "draft.finalized":
-          setPendingDrafts((prev) => prev.filter((d) => d.draftId !== event.draftId));
+          setPendingDrafts((prev) => prev.filter((d) => !(d.botId === botId && d.draftId === event.draftId)));
           // Note: the final message itself arrives via message.new event
           break;
 
         case "download.progress":
         case "download.ready":
         case "download.failed":
-          setDownloads((prev) => {
-            const exists = prev.some((d) => d.id === event.download.id);
-            if (exists) {
-              return prev.map((d) => (d.id === event.download.id ? event.download : d));
-            } else {
-              return [...prev, event.download];
-            }
-          });
+          setDownloads((prev) => mergeDownload(prev, event.download));
           if (event.type === "download.ready") {
-            try {
-              const fileName = event.download.fileName || "telegram_file.bin";
-              const blob = new Blob([
-                `Mock file content for: ${fileName}\n` +
-                `Size: ${event.download.sizeBytes || 0} bytes\n` +
-                `Downloaded successfully via Telegram Web Relay.`
-              ], { type: "text/plain" });
-              const url = window.URL.createObjectURL(blob);
-              const link = document.createElement("a");
-              link.href = url;
-              link.setAttribute("download", fileName);
-              document.body.appendChild(link);
-              link.click();
-              link.remove();
-              window.URL.revokeObjectURL(url);
-            } catch (err) {
-              console.error("Local browser download failed", err);
-            }
+            console.info("Download ready", event.download.proxyUrl || event.download.fileId);
           }
           break;
 
@@ -593,13 +720,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         default:
           console.warn("Unhandled WebSocket event:", event);
       }
-    });
+    }, logout);
 
     return unsubscribe;
-  }, [activeBotId]);
+  }, [logout, userRole]);
 
   // Select active bot
   const selectBot = useCallback((botId: string) => {
+    activeBotIdRef.current = botId;
     setActiveBotId(botId);
     setSelectedMessageState(null); // Clear inspector
     // Mark as read
@@ -613,24 +741,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (text: string, replyToMessageId?: string) => {
       if (!activeBotId || connectionStatus === "offline") return;
       
-      const clientRequestId = `req_${Date.now()}`;
-      await mockApiClient.sendMessage(activeBotId, {
-        clientRequestId,
+      const requestId = clientRequestId();
+      const message = await apiClient.sendMessage(activeBotId, {
+        clientRequestId: requestId,
         text,
         replyToMessageId,
-        sentByAccessKeyName: userRole === "user" ? (activeUserKey || undefined) : undefined,
       });
+      setMessagesMap((prev) => ({
+        ...prev,
+        [activeBotId]: upsertMessage(prev[activeBotId] || [], message),
+      }));
     },
-    [activeBotId, connectionStatus, userRole, activeUserKey]
+    [activeBotId, connectionStatus]
   );
 
   // Trigger media proxy download
   const downloadMedia = useCallback(
     async (fileId: string, messageId?: string, fileName?: string, sizeBytes?: number) => {
-      await mockApiClient.triggerDownload(fileId, messageId, fileName, sizeBytes);
+      const download = await apiClient.triggerDownload(fileId, messageId, fileName, sizeBytes);
+      setDownloads((prev) => mergeDownload(prev, download));
     },
     []
   );
+
+  const pauseDownload = useCallback(async (downloadId: string) => {
+    const download = await apiClient.pauseDownload(downloadId);
+    setDownloads((prev) => mergeDownload(prev, download));
+  }, []);
+
+  const resumeDownload = useCallback(async (downloadId: string) => {
+    const download = await apiClient.resumeDownload(downloadId);
+    setDownloads((prev) => mergeDownload(prev, download));
+  }, []);
+
+  const stopDownload = useCallback(async (downloadId: string) => {
+    const download = await apiClient.stopDownload(downloadId);
+    setDownloads((prev) => mergeDownload(prev, download));
+  }, []);
 
   // Set selected message for Inspector
   const setSelectedMessage = useCallback((msg: ChatMessage | null) => {
@@ -639,7 +786,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Update Settings
   const updateSettings = useCallback(async (newSettings: Partial<Settings>) => {
-    const updated = await mockApiClient.updateSettings(newSettings);
+    const updated = await apiClient.updateSettings(newSettings);
     setSettings(updated);
   }, []);
 
@@ -651,7 +798,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Update File Status
   const updateFileStatus = useCallback(async (fileId: string, status: "pending" | "approved" | "rejected") => {
     try {
-      const updated = await mockApiClient.updateFileStatus(fileId, status);
+      const updated = await apiClient.updateFileStatus(fileId, status);
       setWorkspaceFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
     } catch (e) {
       console.error("Failed to update file status", e);
@@ -661,41 +808,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Update File Tag
   const updateFileTag = useCallback(async (fileId: string, tag: string) => {
     try {
-      const updated = await mockApiClient.updateFileTag(fileId, tag);
+      const updated = await apiClient.updateFileTag(fileId, tag);
       setWorkspaceFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
     } catch (e) {
       console.error("Failed to update file tag", e);
     }
   }, []);
-
-  // Run Mocks Live Simulations
-  const triggerSimulation = useCallback(
-    (type: "draft_stream" | "draft_expiry" | "msg_edit" | "failed_send" | "connection" | "file_new") => {
-      if (!activeBotId) return;
-
-      switch (type) {
-        case "draft_stream":
-          simulateDraftStream(activeBotId);
-          break;
-        case "draft_expiry":
-          simulateDraftExpiry(activeBotId);
-          break;
-        case "msg_edit":
-          simulateMessageEdit(activeBotId);
-          break;
-        case "failed_send":
-          simulateFailedSend(activeBotId);
-          break;
-        case "connection":
-          simulateConnectionStatusToggle();
-          break;
-        case "file_new":
-          simulateIncomingFileEvent(activeBotId);
-          break;
-      }
-    },
-    [activeBotId]
-  );
 
   const activeMessages = activeBotId ? messagesMap[activeBotId] || [] : [];
 
@@ -715,8 +833,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         workspaceFiles,
         userRole,
         language,
-        accessKeys,
-        activeUserKey,
         selectBot,
         sendMessage,
         downloadMedia,
@@ -725,12 +841,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clearEventLog,
         updateFileStatus,
         updateFileTag,
-        triggerSimulation,
         login,
         logout,
+        pauseDownload,
+        resumeDownload,
+        stopDownload,
         t,
-        generateAccessKey,
-        revokeAccessKey,
       }}
     >
       {children}

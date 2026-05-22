@@ -2,7 +2,7 @@ import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { BotList } from "./BotList";
 import { useApp } from "../context/AppContext";
-import { MessageSquare, Settings, LogOut, Terminal, FolderOpen } from "lucide-react";
+import { MessageSquare, Settings, LogOut, Terminal, FolderOpen, HardDriveDownload } from "lucide-react";
 
 export const Sidebar: React.FC = () => {
   const location = useLocation();
@@ -135,6 +135,26 @@ export const Sidebar: React.FC = () => {
             />
           )}
         </Link>
+
+        {userRole === "admin" && (
+          <Link
+            to="/cache"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "36px",
+              height: "36px",
+              borderRadius: "8px",
+              color: isRouteActive(["/cache"]) ? "var(--accent-blue)" : "var(--text-secondary)",
+              backgroundColor: isRouteActive(["/cache"]) ? "var(--accent-blue-transparent)" : "transparent",
+              transition: "all 0.2s ease",
+            }}
+            title="本地下载缓存"
+          >
+            <HardDriveDownload size={18} />
+          </Link>
+        )}
 
         {userRole === "admin" && (
           <Link

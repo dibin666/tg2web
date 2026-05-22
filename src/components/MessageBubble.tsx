@@ -107,7 +107,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
               )}
             </>
           ) : (
-            <span style={{ fontWeight: "600", color: "var(--text-primary)" }}>Telegram Bot</span>
+            <span style={{ fontWeight: "600", color: "var(--text-primary)" }}>
+              Telegram Bot
+              {userRole === "admin" && message.sentByInternalUser ? ` · for ${message.sentByInternalUser.displayName}` : ""}
+            </span>
           )}
         </div>
 
@@ -149,7 +152,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
 
           {/* Inline Keyboard Preview */}
           {message.inlineKeyboard && (
-            <InlineKeyboardPreview keyboard={message.inlineKeyboard} />
+            <InlineKeyboardPreview botId={message.botId} messageId={message.id} keyboard={message.inlineKeyboard} />
           )}
 
           {/* Status & Time Footer */}

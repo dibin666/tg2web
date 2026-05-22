@@ -10,6 +10,11 @@ export type BotSummary = {
   status: "available" | "restricted" | "unknown";
 };
 
+export type BotCommand = {
+  command: string;
+  description: string;
+};
+
 export type InternalUser = {
   id: string;
   displayName: string;
@@ -76,6 +81,7 @@ export type PendingDraft = {
   draftId: string;
   text: string;
   entities: TelegramEntity[];
+  sentByInternalUser?: InternalUser;
   receivedAt: string;
   expiresAt?: string;
   replacesDraftId?: string;
@@ -89,17 +95,82 @@ export type DownloadItem = {
   mimeType?: string;
   sizeBytes?: number;
   downloadedBytes: number;
-  status: "queued" | "downloading" | "ready" | "failed" | "expired";
+  status: "queued" | "downloading" | "paused" | "stopped" | "ready" | "failed" | "expired";
   proxyUrl?: string;
   error?: string;
 };
 
+export type ClearDownloadCacheResponse = {
+  removedFiles: number;
+  removedBytes: number;
+  expiredDownloads: number;
+};
+
+export type DownloadCacheItem = {
+  id: string;
+  downloadId?: string;
+  fileId: string;
+  messageId?: string;
+  botId?: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  downloadedBytes: number;
+  status?: DownloadItem["status"];
+  proxyUrl?: string;
+  cachedBytes: number;
+  serverFileExists: boolean;
+  updatedAt: string;
+};
+
+export type DownloadCacheSummary = {
+  totalCachedFiles: number;
+  totalCachedBytes: number;
+  cleanupIntervalHours: number;
+  items: DownloadCacheItem[];
+};
+
 export type AccessKey = {
   id: string;
-  key: string;
+  key?: string;
+  keyPreview: string;
   name: string;
   createdAt: string;
   lastLoginAt?: string;
+  revokedAt?: string;
+};
+
+export type AuthRole = "admin" | "user";
+
+export type AuthUser = {
+  id: string;
+  displayName: string;
+  role: AuthRole;
+  accessKeyId?: string;
+  accessKeyName?: string;
+};
+
+export type AuthLoginResponse = {
+  token: string;
+  user: AuthUser;
+};
+
+export type MeResponse = {
+  id: string;
+  displayName: string;
+  role?: AuthRole;
+};
+
+export type AdminLoginRequest = {
+  password: string;
+};
+
+export type AccessKeyLoginRequest = {
+  accessKey: string;
+};
+
+export type CreateAccessKeyRequest = {
+  name: string;
 };
 
 export type SendMessageRequest = {
@@ -111,12 +182,23 @@ export type SendMessageRequest = {
   sentByAccessKeyName?: string; // key label audit trace
 };
 
+export type InlineKeyboardClickRequest = {
+  callbackData: string;
+};
+
+export type InlineKeyboardClickResponse = {
+  text?: string;
+  showAlert: boolean;
+  url?: string;
+};
+
 export type Settings = {
   sharedAccountPhone: string;
   sharedAccountStatus: "connected" | "disconnected" | "connecting";
   tdlibStatus: "running" | "stopped" | "error";
   retentionDays: number;
   debugMode: boolean;
+  cacheCleanupIntervalHours: number;
 };
 
 export type BaseEvent = {
@@ -127,6 +209,10 @@ export type BaseEvent = {
 
 export type AppEvent =
   | (BaseEvent & { type: "connection.status"; status: "connecting" | "connected" | "reconnecting" | "offline"; detail?: string })
+  | (BaseEvent & { type: "telegram.auth_state"; authState: TelegramAuthState; tdlibState: TdlibRuntimeState; qrLink?: string })
+  | (BaseEvent & { type: "bot.published"; bot: BotSummary })
+  | (BaseEvent & { type: "bot.updated"; bot: BotSummary })
+  | (BaseEvent & { type: "bot.unpublished"; botId: string })
   | (BaseEvent & { type: "message.new"; message: ChatMessage })
   | (BaseEvent & { type: "message.edited"; message: ChatMessage })
   | (BaseEvent & { type: "message.deleted"; messageId: string })
@@ -155,3 +241,95 @@ export type WorkspaceFile = {
   tag?: string;
   thumbnailUrl?: string;
 };
+
+export type TelegramAuthState =
+  | "not_configured"
+  | "tdlib_starting"
+  | "needs_phone"
+  | "needs_code"
+  | "needs_password"
+  | "needs_qr_scan"
+  | "ready"
+  | "reconnecting"
+  | "error"
+  | "logged_out";
+
+export type TdlibRuntimeState = "stopped" | "starting" | "running" | "reconnecting" | "error";
+
+export type TelegramSetupNextStep =
+  | "configure_credentials"
+  | "submit_phone"
+  | "submit_code"
+  | "submit_password"
+  | "scan_qr"
+  | "wait"
+  | "ready"
+  | "resolve_error";
+
+export type TelegramStatusResponse = {
+  credentialsConfigured: boolean;
+  authState: TelegramAuthState;
+  tdlibState: TdlibRuntimeState;
+  accountPhone?: string;
+  accountLabel?: string;
+  lastSyncAt?: string;
+  lastError?: string;
+  qrLink?: string;
+  nextStep: TelegramSetupNextStep;
+};
+
+export type SaveTelegramCredentialsRequest = {
+  apiId: string;
+  apiHash: string;
+};
+
+export type LoginPhoneRequest = {
+  phoneNumber: string;
+};
+
+export type LoginCodeRequest = {
+  code: string;
+};
+
+export type LoginPasswordRequest = {
+  password: string;
+};
+
+export type TelegramChatKind = "bot" | "user" | "group" | "channel" | "unknown";
+
+export type DiscoveredTelegramChat = {
+  id: string;
+  telegramChatId: string;
+  username?: string;
+  title: string;
+  kind: TelegramChatKind;
+  isBot: boolean;
+  alreadyPublished: boolean;
+  status: BotSummary["status"];
+};
+
+export type HistorySyncPolicy = "latest_only" | "last_n" | "full_available_history";
+
+export type PublishedBot = {
+  id: string;
+  telegramChatId: string;
+  username?: string;
+  title: string;
+  displayTitle?: string;
+  enabled: boolean;
+  isPinned: boolean;
+  sortOrder: number;
+  historySyncPolicy: HistorySyncPolicy;
+  status: BotSummary["status"];
+};
+
+export type PublishBotRequest = {
+  telegramChatId: string;
+  displayTitle?: string;
+  enabled?: boolean;
+  isPinned?: boolean;
+  sortOrder?: number;
+  historySyncPolicy?: HistorySyncPolicy;
+};
+
+export type PatchPublishedBotRequest = Partial<Omit<PublishBotRequest, "telegramChatId">>;

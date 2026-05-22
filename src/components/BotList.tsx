@@ -20,6 +20,8 @@ export const BotList: React.FC = () => {
         <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
           <Search size={14} style={{ position: "absolute", left: "10px", color: "var(--text-muted)" }} />
           <input
+            id="bot-list-search"
+            name="bot-list-search"
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

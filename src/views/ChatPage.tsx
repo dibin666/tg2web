@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useCallback } from "react";
 import { useApp } from "../context/AppContext";
 import { MessageBubble } from "../components/MessageBubble";
 import { PendingDraftBubble } from "../components/PendingDraftBubble";
@@ -7,17 +7,29 @@ import { Bot } from "lucide-react";
 
 export const ChatPage: React.FC = () => {
   const { bots, activeBotId, messages, pendingDrafts, loading } = useApp();
-  const threadEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const activeBot = bots.find((b) => b.id === activeBotId);
 
-  // Auto Scroll to Bottom on new message or new draft
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const applyScroll = () => {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+    };
+
+    requestAnimationFrame(() => {
+      applyScroll();
+      requestAnimationFrame(applyScroll);
+      window.setTimeout(applyScroll, 90);
+    });
+  }, []);
+
+  // Auto Scroll to Bottom on bot switch, new message, media load, or new draft.
   useEffect(() => {
-    if (threadEndRef.current) {
-      threadEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages.length, pendingDrafts.length]);
+    scrollToBottom("auto");
+  }, [activeBotId, messages.length, pendingDrafts.length, scrollToBottom]);
 
   if (loading) {
     return (
@@ -47,7 +59,7 @@ export const ChatPage: React.FC = () => {
         <Bot size={48} style={{ marginBottom: "16px", opacity: 0.3 }} />
         <h3 style={{ color: "var(--text-secondary)", marginBottom: "6px" }}>No Conversation Selected</h3>
         <p style={{ fontSize: "0.8rem", maxWidth: "320px", lineHeight: "1.5" }}>
-          Select a bot from the left sidebar to inspect shared conversations and trigger realtime LLM generation events.
+          Select a published bot from the left sidebar to inspect the shared Telegram conversation.
         </p>
       </div>
     );
@@ -117,6 +129,7 @@ export const ChatPage: React.FC = () => {
           padding: "16px 20px",
           display: "flex",
           flexDirection: "column",
+          overflowAnchor: "none",
         }}
       >
         {messages.length === 0 && pendingDrafts.length === 0 ? (
@@ -134,7 +147,7 @@ export const ChatPage: React.FC = () => {
               Beginning of Conversation
             </h4>
             <p style={{ fontSize: "0.75rem", lineHeight: "1.4" }}>
-              This conversation history is currently empty. Use the simulator deck at the bottom to inject mock logs or type a prompt below.
+              This conversation history is currently empty. New Telegram messages will appear here as they arrive.
             </p>
           </div>
         ) : (
@@ -148,8 +161,6 @@ export const ChatPage: React.FC = () => {
             {pendingDrafts.map((draft) => (
               <PendingDraftBubble key={draft.id} draft={draft} />
             ))}
-
-            <div ref={threadEndRef} />
           </>
         )}
       </div>

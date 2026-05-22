@@ -12,7 +12,7 @@ export const LoginPage: React.FC = () => {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
-  const handleUserLogin = (e: React.FormEvent) => {
+  const handleUserLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!accessKeyInput.trim()) {
       setError(t("pleaseInputPass"));
@@ -21,18 +21,19 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
     setError("");
 
-    setTimeout(() => {
+    try {
       const success = login("user", accessKeyInput.trim());
-      setLoading(false);
-      if (success) {
+      if (await success) {
         navigate("/");
       } else {
         setError(t("invalidKeyError"));
       }
-    }, 800);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleAdminLogin = (e: React.FormEvent) => {
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!password.trim()) {
       setError(t("pleaseInputPass"));
@@ -42,15 +43,16 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
     setError("");
 
-    setTimeout(() => {
+    try {
       const success = login("admin", password.trim());
-      setLoading(false);
-      if (success) {
+      if (await success) {
         navigate("/");
       } else {
         setError(t("incorrectAdminPass"));
       }
-    }, 1000);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -198,14 +200,17 @@ export const LoginPage: React.FC = () => {
         {activeTab === "user" ? (
           <form onSubmit={handleUserLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             <div className="settings-group" style={{ marginBottom: "0" }}>
-              <label style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>
+              <label htmlFor="access-key" style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>
                 {t("accessKeyLabel")}
               </label>
               <input
+                id="access-key"
+                name="access-key"
                 type="password"
                 value={accessKeyInput}
                 onChange={(e) => setAccessKeyInput(e.target.value)}
                 placeholder={t("accessKeyPlaceholder")}
+                autoComplete="current-password"
                 disabled={loading}
                 className="settings-input"
                 style={{
@@ -252,14 +257,17 @@ export const LoginPage: React.FC = () => {
         ) : (
           <form onSubmit={handleAdminLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             <div className="settings-group" style={{ marginBottom: "0" }}>
-              <label style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>
+              <label htmlFor="admin-password" style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>
                 {t("passwordLabel")}
               </label>
               <input
+                id="admin-password"
+                name="admin-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={t("passwordPlaceholder")}
+                autoComplete="current-password"
                 disabled={loading}
                 className="settings-input"
                 style={{
