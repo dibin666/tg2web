@@ -1,6 +1,6 @@
 import React from "react";
 import { useApp } from "../context/AppContext";
-import { downloadProxyFile } from "../api/client";
+import { downloadProxyFile, type ProxyDownloadProgress } from "../api/client";
 import { Download, AlertCircle, Loader, Pause, Play, Square } from "lucide-react";
 
 interface DownloadProgressProps {
@@ -12,6 +12,7 @@ interface DownloadProgressProps {
 
 export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, fileName, sizeBytes, messageId }) => {
   const { downloads, downloadMedia, pauseDownload, resumeDownload, stopDownload, t } = useApp();
+  const [localDownloadProgress, setLocalDownloadProgress] = React.useState<ProxyDownloadProgress | null>(null);
 
   const activeDownload = downloads.find((d) => d.fileId === fileId && (d.messageId || "") === (messageId || ""))
     || downloads.find((d) => d.fileId === fileId);
@@ -41,15 +42,25 @@ export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, file
   };
 
   const handleProxyDownload = async () => {
+    if (localDownloadProgress) return;
+
     if (!activeDownload?.proxyUrl) {
       handleDownload();
       return;
     }
 
+    setLocalDownloadProgress({
+      loadedBytes: 0,
+      totalBytes: sizeBytes || activeDownload.sizeBytes,
+      percent: 0,
+    });
+
     try {
-      await downloadProxyFile(activeDownload.proxyUrl, activeDownload.fileName || fileName);
+      await downloadProxyFile(activeDownload.proxyUrl, activeDownload.fileName || fileName, setLocalDownloadProgress);
     } catch (error) {
       console.error("Proxy download failed", error);
+    } finally {
+      setLocalDownloadProgress(null);
     }
   };
 
@@ -127,17 +138,28 @@ export const DownloadProgress: React.FC<DownloadProgressProps> = ({ fileId, file
       );
 
     case "ready":
-      return (
-        <button
-          className="btn-download-action success"
-          onClick={handleProxyDownload}
-          title={t("downloadAgainTooltip")}
-          style={{ cursor: "pointer" }}
-        >
-          <Download size={12} />
-          <span>下载到本机</span>
-        </button>
-      );
+      {
+        const isLocalDownloadActive = Boolean(localDownloadProgress);
+        const localDownloadLabel = isLocalDownloadActive
+          ? localDownloadProgress?.percent
+            ? `准备中 ${localDownloadProgress.percent}%`
+            : t("statusPreparing")
+          : "下载到本机";
+
+        return (
+          <button
+            className="btn-download-action success"
+            onClick={handleProxyDownload}
+            title={t("downloadAgainTooltip")}
+            disabled={isLocalDownloadActive}
+            aria-busy={isLocalDownloadActive}
+            style={{ cursor: isLocalDownloadActive ? "wait" : "pointer" }}
+          >
+            {isLocalDownloadActive ? <Loader size={12} className="animate-pulse-slow" /> : <Download size={12} />}
+            <span>{localDownloadLabel}</span>
+          </button>
+        );
+      }
 
     case "failed":
       return (

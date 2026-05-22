@@ -580,7 +580,8 @@ a:hover {
 .cache-summary-card {
   min-height: 112px;
 }
-.cache-summary-card button.btn-secondary {
+.cache-summary-card > button.btn-secondary,
+.cache-summary-card > .btn-secondary {
   width: 100%;
   justify-content: center;
 }
@@ -898,6 +899,10 @@ a:hover {
   transition: all 0.2s;
   border: 1px solid transparent;
 }
+.btn-download-action:disabled {
+  opacity: 0.78;
+  cursor: wait;
+}
 .btn-download-action.start {
   background-color: var(--accent-blue-transparent);
   color: var(--accent-blue);
@@ -913,6 +918,9 @@ a:hover {
 }
 .btn-download-action.success:hover {
   background-color: #059669;
+}
+.btn-download-action.success:disabled:hover {
+  background-color: var(--accent-green);
 }
 .btn-download-action.retry {
   background-color: var(--accent-yellow-transparent);
@@ -1109,4 +1117,3 @@ a:hover {
     padding-right: 0;
   }
 }
-

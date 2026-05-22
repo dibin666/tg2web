@@ -140,6 +140,12 @@ const jsonBody = (value: unknown) => JSON.stringify(value);
 
 export const proxyPathForFile = (fileId: string) => `/api/files/${encodeURIComponent(fileId)}/proxy`;
 
+export type ProxyDownloadProgress = {
+  loadedBytes: number;
+  totalBytes?: number;
+  percent?: number;
+};
+
 export async function proxyFileObjectUrl(path: string): Promise<string> {
   const headers = new Headers();
   const token = getAuthToken();
@@ -155,7 +161,58 @@ export async function proxyFileObjectUrl(path: string): Promise<string> {
   return URL.createObjectURL(await response.blob());
 }
 
-export async function downloadProxyFile(path: string, fileName?: string): Promise<void> {
+async function responseBlobWithProgress(
+  response: Response,
+  onProgress?: (progress: ProxyDownloadProgress) => void,
+): Promise<Blob> {
+  const totalBytes = Number(response.headers.get("content-length") || 0) || undefined;
+
+  if (!response.body || !onProgress) {
+    const blob = await response.blob();
+    onProgress?.({
+      loadedBytes: blob.size,
+      totalBytes: totalBytes ?? blob.size,
+      percent: 100,
+    });
+    return blob;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: BlobPart[] = [];
+  let loadedBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+
+    const chunk = new Uint8Array(value.byteLength);
+    chunk.set(value);
+    chunks.push(chunk);
+    loadedBytes += chunk.byteLength;
+    onProgress({
+      loadedBytes,
+      totalBytes,
+      percent: totalBytes ? Math.min(100, Math.round((loadedBytes / totalBytes) * 100)) : undefined,
+    });
+  }
+
+  onProgress({
+    loadedBytes,
+    totalBytes: totalBytes ?? loadedBytes,
+    percent: 100,
+  });
+
+  return new Blob(chunks, {
+    type: response.headers.get("content-type") || "application/octet-stream",
+  });
+}
+
+export async function downloadProxyFile(
+  path: string,
+  fileName?: string,
+  onProgress?: (progress: ProxyDownloadProgress) => void,
+): Promise<void> {
   const headers = new Headers();
   const token = getAuthToken();
   if (token) {
@@ -167,7 +224,7 @@ export async function downloadProxyFile(path: string, fileName?: string): Promis
     throw new Error(await responseErrorMessage(response));
   }
 
-  const blob = await response.blob();
+  const blob = await responseBlobWithProgress(response, onProgress);
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
@@ -175,7 +232,7 @@ export async function downloadProxyFile(path: string, fileName?: string): Promis
   link.rel = "noopener";
   link.style.display = "none";
   document.body.appendChild(link);
-  link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
