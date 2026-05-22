@@ -592,7 +592,17 @@ impl AppState {
     }
 
     pub async fn telegram_status(&self) -> TelegramStatusResponse {
-        self.runtime.read().await.telegram.status_response()
+        let status = self.runtime.read().await.telegram.status_response();
+        if status.auth_state == TelegramAuthState::Ready
+            && status.tdlib_state == TdlibRuntimeState::Running
+            && status.account_phone.is_none()
+            && status.account_label.is_none()
+        {
+            if let Err(error) = self.request_telegram_account_info().await {
+                tracing::debug!(%error, "failed to request Telegram account info refresh");
+            }
+        }
+        status
     }
 
     pub async fn save_telegram_credentials(
@@ -876,6 +886,9 @@ impl AppState {
         };
         self.emit_telegram_status(&status);
         if became_ready {
+            if let Err(error) = self.request_telegram_account_info().await {
+                tracing::debug!(%error, "failed to request Telegram account info after authorization ready");
+            }
             self.spawn_download_recovery();
         }
         Ok(status)
@@ -903,6 +916,17 @@ impl AppState {
             tdlib_state: status.tdlib_state.clone(),
             qr_link: status.qr_link.clone(),
         });
+    }
+
+    async fn request_telegram_account_info(&self) -> AppResult<()> {
+        let credentials = self.telegram_credentials().await?;
+        self.telegram_bridge.send_request(
+            credentials,
+            json!({
+                "@type": "getMe",
+                "@extra": "account:self"
+            }),
+        )
     }
 
     fn spawn_telegram_update_pump(&self) {
@@ -1109,6 +1133,9 @@ impl AppState {
                     }
                 }
             }
+            Some("user") => {
+                self.apply_tdjson_account_user_response(response).await?;
+            }
             Some("userFullInfo") => {
                 self.apply_tdjson_user_full_info_response(response).await?;
             }
@@ -1173,6 +1200,23 @@ impl AppState {
         self.request_resolved_tdlib_download(&extra.download_id, &candidate.file_id)
             .await?;
         Ok(true)
+    }
+
+    async fn apply_tdjson_account_user_response(&self, response: Value) -> AppResult<()> {
+        if non_empty_string(response.get("@extra")).as_deref() != Some("account:self") {
+            return Ok(());
+        }
+
+        let (account_phone, account_label) = tdjson_account_identity_from_user(&response);
+        let status = {
+            let mut runtime = self.runtime.write().await;
+            runtime.telegram.account_phone = account_phone;
+            runtime.telegram.account_label = account_label;
+            runtime.telegram.persist(&self.db).await?;
+            runtime.telegram.status_response()
+        };
+        self.emit_telegram_status(&status);
+        Ok(())
     }
 
     async fn select_tdjson_download_candidate(
@@ -1283,6 +1327,10 @@ impl AppState {
         };
         if extra.starts_with("bot_commands") {
             tracing::debug!(raw = %response, "optional bot command TDLib request failed");
+            return Ok(());
+        }
+        if extra == "account:self" {
+            tracing::debug!(raw = %response, "optional Telegram account info request failed");
             return Ok(());
         }
 
@@ -5437,6 +5485,43 @@ fn tdjson_bot_commands_from_user_full_info(value: &Value) -> Vec<BotCommand> {
         .unwrap_or_default()
 }
 
+fn tdjson_account_identity_from_user(value: &Value) -> (Option<String>, Option<String>) {
+    let account_phone = non_empty_string(value.get("phone_number")).map(|phone| {
+        if phone.starts_with('+') {
+            phone
+        } else {
+            format!("+{phone}")
+        }
+    });
+    let first_name = non_empty_string(value.get("first_name")).unwrap_or_default();
+    let last_name = non_empty_string(value.get("last_name")).unwrap_or_default();
+    let display_name = [first_name, last_name]
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let username = non_empty_string(value.get("username")).or_else(|| {
+        value
+            .get("usernames")
+            .and_then(|usernames| usernames.get("active_usernames"))
+            .and_then(Value::as_array)
+            .and_then(|usernames| {
+                usernames
+                    .iter()
+                    .find_map(|username| non_empty_string(Some(username)))
+            })
+    });
+    let fallback_id = tdjson_id_to_string(value.get("id")).map(|id| format!("Telegram ID {id}"));
+    let account_label = match (display_name.trim().is_empty(), username) {
+        (false, Some(username)) => Some(format!("{display_name} (@{username})")),
+        (false, None) => Some(display_name),
+        (true, Some(username)) => Some(format!("@{username}")),
+        (true, None) => fallback_id,
+    };
+
+    (account_phone, account_label)
+}
+
 fn stable_json_hash(value: &Value) -> String {
     hex_sha256(value.to_string().as_bytes())
         .chars()
@@ -5800,6 +5885,48 @@ mod tests {
                     description: "Download everything".to_string(),
                 },
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn tdjson_account_self_response_updates_telegram_status_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = AppConfig::for_test(dir.path());
+        let state = AppState::new(config.clone()).await.expect("state");
+
+        state
+            .apply_tdjson_response(json!({
+                "@type": "user",
+                "@extra": "account:self",
+                "id": 42424242,
+                "first_name": "Alice",
+                "last_name": "Ops",
+                "phone_number": "15551234567",
+                "usernames": {
+                    "@type": "usernames",
+                    "active_usernames": ["alice_ops"]
+                }
+            }))
+            .await
+            .expect("account self response");
+
+        let status = state.telegram_status().await;
+        assert_eq!(status.account_phone.as_deref(), Some("+15551234567"));
+        assert_eq!(
+            status.account_label.as_deref(),
+            Some("Alice Ops (@alice_ops)")
+        );
+
+        drop(state);
+        let restored = AppState::new(config).await.expect("restored state");
+        let restored_status = restored.telegram_status().await;
+        assert_eq!(
+            restored_status.account_phone.as_deref(),
+            Some("+15551234567")
+        );
+        assert_eq!(
+            restored_status.account_label.as_deref(),
+            Some("Alice Ops (@alice_ops)")
         );
     }
 

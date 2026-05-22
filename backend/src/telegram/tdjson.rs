@@ -344,7 +344,8 @@ fn process_tdjson_value(
                 .get("@extra")
                 .and_then(Value::as_str)
                 .is_some_and(|extra| {
-                    extra.starts_with("bot_commands")
+                    extra == "account:self"
+                        || extra.starts_with("bot_commands")
                         || extra.starts_with("download:")
                         || extra.starts_with("download_message:")
                 })

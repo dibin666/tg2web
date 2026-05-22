@@ -4,9 +4,81 @@ import { QRCodeSVG } from "qrcode.react";
 import { adminApiClient } from "../api/client";
 import { AccessKey, DiscoveredTelegramChat, PublishedBot, TelegramStatusResponse } from "../api/types";
 import { useApp } from "../context/AppContext";
-import { Bot, Check, ChevronLeft, ChevronRight, Database, KeyRound, RefreshCw, Save, Search, Send, Settings, Shield, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
+import { Bot, Check, ChevronLeft, ChevronRight, Copy, Database, KeyRound, RefreshCw, Save, Search, Send, Settings, Shield, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
 
 const BOT_LIST_PAGE_SIZE = 8;
+
+const copyTextToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+};
+
+type StatusTone = "good" | "warning" | "danger" | "neutral";
+
+const tdlibStateText: Record<TelegramStatusResponse["tdlibState"], string> = {
+  stopped: "未运行",
+  starting: "启动中",
+  running: "运行中",
+  reconnecting: "重连中",
+  error: "异常",
+};
+
+const authStateText: Record<TelegramStatusResponse["authState"], string> = {
+  not_configured: "未配置",
+  tdlib_starting: "TDLib 启动中",
+  needs_phone: "等待输入手机号",
+  needs_code: "等待验证码",
+  needs_password: "等待两步验证密码",
+  needs_qr_scan: "等待扫码登录",
+  ready: "已登录",
+  reconnecting: "正在重连",
+  error: "异常",
+  logged_out: "已退出",
+};
+
+const nextStepText: Record<TelegramStatusResponse["nextStep"], string> = {
+  configure_credentials: "配置 API 凭证",
+  submit_phone: "输入手机号",
+  submit_code: "输入验证码",
+  submit_password: "输入两步验证密码",
+  scan_qr: "扫描二维码",
+  wait: "等待 Telegram 响应",
+  ready: "无需操作",
+  resolve_error: "处理错误后重连",
+};
+
+const connectionStatusText: Record<"connecting" | "connected" | "reconnecting" | "offline", string> = {
+  connecting: "连接中",
+  connected: "已连接",
+  reconnecting: "重连中",
+  offline: "离线",
+};
+
+const statusTone = (value: string): StatusTone => {
+  if (value === "ready" || value === "running" || value === "connected") return "good";
+  if (value === "error" || value === "offline" || value === "not_configured" || value === "logged_out") return "danger";
+  if (value === "reconnecting" || value === "starting" || value.startsWith("needs_") || value === "tdlib_starting") return "warning";
+  return "neutral";
+};
+
+const formatStatusTime = (value?: string) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+};
 
 export const SettingsPage: React.FC = () => {
   const { settings, updateSettings, connectionStatus, t } = useApp();
@@ -17,6 +89,7 @@ export const SettingsPage: React.FC = () => {
   const [accessKeys, setAccessKeys] = React.useState<AccessKey[]>([]);
   const [newKeyName, setNewKeyName] = React.useState("");
   const [createdAccessKey, setCreatedAccessKey] = React.useState<AccessKey | null>(null);
+  const [knownAccessKeySecrets, setKnownAccessKeySecrets] = React.useState<Record<string, string>>({});
   const [apiId, setApiId] = React.useState("");
   const [apiHash, setApiHash] = React.useState("");
   const [phoneNumber, setPhoneNumber] = React.useState("");
@@ -47,12 +120,13 @@ export const SettingsPage: React.FC = () => {
   }, [refreshAdminState]);
 
   React.useEffect(() => {
-    if (telegramStatus?.nextStep !== "scan_qr" && telegramStatus?.nextStep !== "wait") return;
+    const needsAccountInfo = telegramStatus?.nextStep === "ready" && !telegramStatus.accountPhone && !telegramStatus.accountLabel;
+    if (telegramStatus?.nextStep !== "scan_qr" && telegramStatus?.nextStep !== "wait" && !needsAccountInfo) return;
     const intervalId = window.setInterval(() => {
       void adminApiClient.getTelegramStatus().then(setTelegramStatus).catch(() => undefined);
     }, 2000);
     return () => window.clearInterval(intervalId);
-  }, [telegramStatus?.nextStep]);
+  }, [telegramStatus?.accountLabel, telegramStatus?.accountPhone, telegramStatus?.nextStep]);
 
   if (!settings) return null;
 
@@ -90,10 +164,22 @@ export const SettingsPage: React.FC = () => {
       async () => {
         const created = await adminApiClient.createAccessKey({ name });
         setCreatedAccessKey(created);
+        if (created.key) {
+          setKnownAccessKeySecrets((prev) => ({ ...prev, [created.id]: created.key as string }));
+        }
         setNewKeyName("");
       },
       "Access key created. Copy it now; it will not be shown again."
     );
+  };
+
+  const handleCopyAccessKey = async (secret: string) => {
+    try {
+      await copyTextToClipboard(secret);
+      setNotice("Access key copied.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const handleRetentionChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -106,6 +192,12 @@ export const SettingsPage: React.FC = () => {
 
   const statusValue = telegramStatus?.authState || "not_configured";
   const tdlibValue = telegramStatus?.tdlibState || "stopped";
+  const nextStepValue = telegramStatus?.nextStep || "configure_credentials";
+  const telegramAccountText = telegramStatus?.accountLabel && telegramStatus?.accountPhone
+    ? `${telegramStatus.accountLabel} · ${telegramStatus.accountPhone}`
+    : telegramStatus?.accountLabel
+      || telegramStatus?.accountPhone
+      || (statusValue === "ready" ? t("telegramAccountSyncing") : t("telegramAccountMissing"));
   const publishedPageCount = Math.max(1, Math.ceil(publishedBots.length / BOT_LIST_PAGE_SIZE));
   const discoveredPageCount = Math.max(1, Math.ceil(discoveredChats.length / BOT_LIST_PAGE_SIZE));
   const currentPublishedPage = Math.min(publishedPage, publishedPageCount);
@@ -226,48 +318,62 @@ export const SettingsPage: React.FC = () => {
               <section className="settings-card">
                 <div className="settings-card-title">
                   <span>{t("tdlibStatus")}</span>
-                  <button className="icon-button" onClick={() => refreshAdminState()} disabled={busy} title="Refresh">
+                  <button className="icon-button" onClick={() => refreshAdminState()} disabled={busy} title="刷新状态" aria-label="刷新状态">
                     <RefreshCw size={15} />
                   </button>
                 </div>
-                <div className="settings-row">
-                  <span>{t("processStatus")}</span>
-                  <strong>{tdlibValue}</strong>
-                </div>
-                <div className="settings-row">
-                  <span>{t("websocketGateway")}</span>
-                  <strong>{connectionStatus}</strong>
-                </div>
-                <div className="settings-row">
-                  <span>Credentials</span>
-                  <strong>{telegramStatus?.credentialsConfigured ? "configured" : "not configured"}</strong>
-                </div>
-                <div className="settings-row">
-                  <span>Authorization</span>
-                  <strong>{statusValue}</strong>
-                </div>
-                <div className="settings-row">
-                  <span>{t("sharedPhone")}</span>
-                  <strong>{telegramStatus?.accountPhone || "-"}</strong>
-                </div>
-                <div className="settings-row">
-                  <span>Next step</span>
-                  <strong>{telegramStatus?.nextStep || "configure_credentials"}</strong>
+                <div className="telegram-status-grid">
+                  <div className="telegram-status-row account">
+                    <span>{t("telegramAccount")}</span>
+                    <strong>{telegramAccountText}</strong>
+                  </div>
+                  <div className="telegram-status-row">
+                    <span>{t("telegramAuthorizationStatus")}</span>
+                    <strong className={`telegram-status-badge ${statusTone(statusValue)}`}>{authStateText[statusValue]}</strong>
+                  </div>
+                  <div className="telegram-status-row">
+                    <span>{t("processStatus")}</span>
+                    <strong className={`telegram-status-badge ${statusTone(tdlibValue)}`}>{tdlibStateText[tdlibValue]}</strong>
+                  </div>
+                  <div className="telegram-status-row">
+                    <span>{t("websocketGateway")}</span>
+                    <strong className={`telegram-status-badge ${statusTone(connectionStatus)}`}>{connectionStatusText[connectionStatus]}</strong>
+                  </div>
+                  <div className="telegram-status-row">
+                    <span>{t("telegramCredentialsStatus")}</span>
+                    <strong className={`telegram-status-badge ${telegramStatus?.credentialsConfigured ? "good" : "danger"}`}>
+                      {telegramStatus?.credentialsConfigured ? "已配置" : "未配置"}
+                    </strong>
+                  </div>
+                  <div className="telegram-status-row">
+                    <span>{t("telegramNextStep")}</span>
+                    <strong>{nextStepText[nextStepValue]}</strong>
+                  </div>
+                  <div className="telegram-status-row">
+                    <span>{t("telegramLastSync")}</span>
+                    <strong>{formatStatusTime(telegramStatus?.lastSyncAt)}</strong>
+                  </div>
+                  {telegramStatus?.lastError && (
+                    <div className="telegram-status-row error">
+                      <span>{t("telegramLastError")}</span>
+                      <strong>{telegramStatus.lastError}</strong>
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: "flex", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
                   <button
                     className="btn-secondary"
                     disabled={busy || !telegramStatus?.credentialsConfigured}
-                    onClick={() => runAdminAction(() => adminApiClient.reconnectTelegram(), "Reconnect requested.")}
+                    onClick={() => runAdminAction(() => adminApiClient.reconnectTelegram(), "已请求重新连接 Telegram。")}
                   >
-                    Reconnect
+                    {t("reconnectTelegramBtn")}
                   </button>
                   <button
                     className="btn-secondary"
                     disabled={busy || !telegramStatus?.credentialsConfigured}
-                    onClick={() => runAdminAction(() => adminApiClient.logoutTelegram(), "Logout requested.")}
+                    onClick={() => runAdminAction(() => adminApiClient.logoutTelegram(), "已请求退出 Telegram。")}
                   >
-                    Logout
+                    {t("logoutTelegramBtn")}
                   </button>
                 </div>
               </section>
@@ -471,7 +577,7 @@ export const SettingsPage: React.FC = () => {
                   <span>{t("keyMgmtTitle")}</span>
                   <KeyRound size={15} style={{ color: "var(--accent-blue)" }} />
                 </div>
-                <form onSubmit={handleCreateAccessKey} style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                <form onSubmit={handleCreateAccessKey} className="access-key-create-form">
                   <input
                     id="access-key-name"
                     name="access-key-name"
@@ -481,25 +587,26 @@ export const SettingsPage: React.FC = () => {
                     placeholder={t("keyNamePlaceholder")}
                     style={{ margin: 0 }}
                   />
-                  <button className="btn-secondary" type="submit" disabled={busy || !newKeyName.trim()}>
+                  <button className="btn-secondary access-key-generate-button" type="submit" disabled={busy || !newKeyName.trim()}>
                     <KeyRound size={14} />
                     <span>{t("generateKeyBtn")}</span>
                   </button>
                 </form>
                 {createdAccessKey?.key && (
-                  <div
-                    style={{
-                      border: "1px solid rgba(34, 197, 94, 0.25)",
-                      borderRadius: "6px",
-                      padding: "10px",
-                      marginBottom: "12px",
-                      backgroundColor: "rgba(34, 197, 94, 0.04)",
-                    }}
-                  >
-                    <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginBottom: "6px" }}>
-                      New access key
+                  <div className="access-key-created-card">
+                    <div className="access-key-created-header">
+                      <div>New access key</div>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        onClick={() => createdAccessKey.key && handleCopyAccessKey(createdAccessKey.key)}
+                        title={t("copyKeyBtn")}
+                        aria-label={t("copyKeyBtn")}
+                      >
+                        <Copy size={14} />
+                      </button>
                     </div>
-                    <code style={{ fontSize: "0.72rem", color: "var(--text-primary)", wordBreak: "break-all" }}>
+                    <code className="access-key-secret">
                       {createdAccessKey.key}
                     </code>
                   </div>
@@ -508,25 +615,41 @@ export const SettingsPage: React.FC = () => {
                   {accessKeys.length === 0 ? (
                     <span className="settings-empty">No user access keys.</span>
                   ) : (
-                    accessKeys.map((key) => (
-                      <div className="settings-list-row" key={key.id}>
-                        <div>
-                          <strong>{key.name}</strong>
-                          <span>
-                            {key.keyPreview} · {key.lastLoginAt || t("neverLogin")}
-                            {key.revokedAt ? " · revoked" : ""}
-                          </span>
+                    accessKeys.map((key) => {
+                      const knownSecret = knownAccessKeySecrets[key.id] ?? key.key;
+
+                      return (
+                        <div className="settings-list-row" key={key.id}>
+                          <div>
+                            <strong>{key.name}</strong>
+                            <span>
+                              {key.keyPreview} · {key.lastLoginAt || t("neverLogin")}
+                              {key.revokedAt ? " · revoked" : ""}
+                            </span>
+                          </div>
+                          <div className="access-key-row-actions">
+                            <button
+                              type="button"
+                              className="icon-button"
+                              disabled={!knownSecret || Boolean(key.revokedAt)}
+                              onClick={() => knownSecret && handleCopyAccessKey(knownSecret)}
+                              title={knownSecret ? t("copyKeyBtn") : t("copyKeyUnavailable")}
+                              aria-label={knownSecret ? t("copyKeyBtn") : t("copyKeyUnavailable")}
+                            >
+                              <Copy size={14} />
+                            </button>
+                            <button
+                              className="icon-button"
+                              disabled={busy || Boolean(key.revokedAt)}
+                              onClick={() => runAdminAction(() => adminApiClient.revokeAccessKey(key.id), "Access key revoked.")}
+                              title={t("revokeBtn")}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         </div>
-                        <button
-                          className="icon-button"
-                          disabled={busy || Boolean(key.revokedAt)}
-                          onClick={() => runAdminAction(() => adminApiClient.revokeAccessKey(key.id), "Access key revoked.")}
-                          title={t("revokeBtn")}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </section>
@@ -583,6 +706,80 @@ export const SettingsPage: React.FC = () => {
       </div>
 
       <style>{`
+        .telegram-status-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .telegram-status-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          min-height: 38px;
+          border: 1px solid var(--border-color);
+          border-radius: 6px;
+          padding: 8px 10px;
+          background-color: #ffffff;
+          font-size: 0.76rem;
+        }
+        .telegram-status-row.account,
+        .telegram-status-row.error {
+          grid-column: 1 / -1;
+        }
+        .telegram-status-row span {
+          color: var(--text-secondary);
+          flex-shrink: 0;
+        }
+        .telegram-status-row strong {
+          color: var(--text-primary);
+          font-family: var(--font-mono);
+          font-size: 0.76rem;
+          text-align: right;
+          overflow-wrap: anywhere;
+        }
+        .telegram-status-row.account strong {
+          font-family: inherit;
+          font-size: 0.82rem;
+          font-weight: 700;
+        }
+        .telegram-status-row.error {
+          border-color: rgba(244, 63, 94, 0.25);
+          background-color: rgba(244, 63, 94, 0.04);
+        }
+        .telegram-status-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 70px;
+          border-radius: 999px;
+          padding: 3px 8px;
+          border: 1px solid transparent;
+          font-family: inherit !important;
+          font-size: 0.72rem !important;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+        .telegram-status-badge.good {
+          color: var(--accent-green);
+          background-color: rgba(16, 185, 129, 0.08);
+          border-color: rgba(16, 185, 129, 0.18);
+        }
+        .telegram-status-badge.warning {
+          color: var(--accent-yellow);
+          background-color: rgba(245, 158, 11, 0.08);
+          border-color: rgba(245, 158, 11, 0.2);
+        }
+        .telegram-status-badge.danger {
+          color: var(--accent-red);
+          background-color: rgba(244, 63, 94, 0.08);
+          border-color: rgba(244, 63, 94, 0.18);
+        }
+        .telegram-status-badge.neutral {
+          color: var(--text-secondary);
+          background-color: rgba(148, 163, 184, 0.08);
+          border-color: rgba(148, 163, 184, 0.18);
+        }
         .settings-row {
           display: flex;
           justify-content: space-between;
@@ -603,6 +800,45 @@ export const SettingsPage: React.FC = () => {
           display: flex;
           flex-direction: column;
           gap: 8px;
+        }
+        .access-key-create-form {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 8px;
+          margin-bottom: 12px;
+        }
+        .access-key-generate-button {
+          min-width: 112px;
+          justify-content: center;
+          white-space: nowrap;
+        }
+        .access-key-created-card {
+          border: 1px solid rgba(34, 197, 94, 0.25);
+          border-radius: 6px;
+          padding: 10px;
+          margin-bottom: 12px;
+          background-color: rgba(34, 197, 94, 0.04);
+        }
+        .access-key-created-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 6px;
+          font-size: 0.72rem;
+          color: var(--text-secondary);
+        }
+        .access-key-secret {
+          display: block;
+          font-size: 0.72rem;
+          color: var(--text-primary);
+          word-break: break-all;
+        }
+        .access-key-row-actions {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          flex-shrink: 0;
         }
         .settings-list-row {
           display: flex;
@@ -670,6 +906,21 @@ export const SettingsPage: React.FC = () => {
         @media (max-width: 768px) {
           .settings-grid {
             grid-template-columns: 1fr !important;
+          }
+          .telegram-status-grid {
+            grid-template-columns: 1fr;
+          }
+          .telegram-status-row {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 5px;
+          }
+          .telegram-status-row.account,
+          .telegram-status-row.error {
+            grid-column: auto;
+          }
+          .telegram-status-row strong {
+            text-align: left;
           }
           .settings-cache-control {
             align-items: flex-start;

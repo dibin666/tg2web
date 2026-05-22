@@ -94,9 +94,19 @@ const translations = {
     settingsTabSecurity: "安全与密钥",
     settingsTabSystem: "系统与清理",
     tdlibStatus: "TDLib 控制器状态",
-    processStatus: "进程状态:",
-    websocketGateway: "WebSocket 网关:",
-    sharedPhone: "共享电话:",
+    processStatus: "TDLib 进程",
+    websocketGateway: "前端连接",
+    telegramCredentialsStatus: "API 凭证",
+    telegramAuthorizationStatus: "登录状态",
+    telegramAccount: "登录账号",
+    telegramAccountSyncing: "已登录，正在同步账号信息",
+    telegramAccountMissing: "未登录",
+    telegramNextStep: "下一步",
+    telegramLastSync: "最近同步",
+    telegramLastError: "最近错误",
+    reconnectTelegramBtn: "重新连接",
+    logoutTelegramBtn: "退出 Telegram",
+    sharedPhone: "账号手机号",
     tgApiCredentials: "TELEGRAM API 凭证",
     apiIdDesc: "API ID (Telegram 开发者控制台)",
     apiHashDesc: "API Hash (受保护密钥)",
@@ -126,6 +136,8 @@ const translations = {
     incorrectAdminPass: "密码错误",
     keyMgmtTitle: "用户访问密钥管理",
     generateKeyBtn: "生成密钥",
+    copyKeyBtn: "复制密钥",
+    copyKeyUnavailable: "完整密钥仅在生成后当前页面会话内可复制",
     keyNamePlaceholder: "输入密钥名称 (如: 前台-01)...",
     colKeyName: "密钥名称",
     colKeySecret: "密钥内容",
@@ -206,9 +218,19 @@ const translations = {
     settingsTabSecurity: "Security & Keys",
     settingsTabSystem: "System & Cache",
     tdlibStatus: "TDLIB CONTROLLER STATUS",
-    processStatus: "Process Status:",
-    websocketGateway: "WebSocket Gateway:",
-    sharedPhone: "Shared Phone:",
+    processStatus: "TDLib process",
+    websocketGateway: "Frontend connection",
+    telegramCredentialsStatus: "API credentials",
+    telegramAuthorizationStatus: "Login status",
+    telegramAccount: "Logged-in account",
+    telegramAccountSyncing: "Logged in, syncing account info",
+    telegramAccountMissing: "Not logged in",
+    telegramNextStep: "Next step",
+    telegramLastSync: "Last sync",
+    telegramLastError: "Last error",
+    reconnectTelegramBtn: "Reconnect",
+    logoutTelegramBtn: "Log out Telegram",
+    sharedPhone: "Account phone",
     tgApiCredentials: "TELEGRAM API CREDENTIALS",
     apiIdDesc: "API ID (Telegram app-developer console)",
     apiHashDesc: "API Hash (Protected Secret Key)",
@@ -255,6 +277,8 @@ const translations = {
     incorrectAdminPass: "Incorrect passcode",
     keyMgmtTitle: "USER ACCESS KEYS",
     generateKeyBtn: "Generate",
+    copyKeyBtn: "Copy key",
+    copyKeyUnavailable: "Full key is only copyable in the page session where it was generated",
     keyNamePlaceholder: "Key label (e.g., FrontDesk-01)...",
     colKeyName: "Key Label",
     colKeySecret: "Secret Key",
@@ -307,6 +331,12 @@ const chooseMessageId = (left: ChatMessage, right: ChatMessage) => {
   return right.id || left.id;
 };
 
+const chooseTelegramMessageId = (left: ChatMessage, right: ChatMessage) => {
+  if (isClientRequestMessageId(right.id) && right.telegramMessageId) return right.telegramMessageId;
+  if (isClientRequestMessageId(left.id) && left.telegramMessageId) return left.telegramMessageId;
+  return right.telegramMessageId ?? left.telegramMessageId;
+};
+
 const messagesHaveCompatibleInternalSender = (left: ChatMessage, right: ChatMessage) =>
   !left.sentByInternalUser?.id
   || !right.sentByInternalUser?.id
@@ -315,9 +345,20 @@ const messagesHaveCompatibleInternalSender = (left: ChatMessage, right: ChatMess
 const messagesHaveCompatibleMediaShape = (left: ChatMessage, right: ChatMessage) =>
   (left.media?.length || 0) === (right.media?.length || 0);
 
+const messagesLookLikeAppSendAndTelegramEcho = (left: ChatMessage, right: ChatMessage) => {
+  const leftIsClientRequest = isClientRequestMessageId(left.id);
+  const rightIsClientRequest = isClientRequestMessageId(right.id);
+  const leftHasInternalSender = Boolean(left.sentByInternalUser);
+  const rightHasInternalSender = Boolean(right.sentByInternalUser);
+
+  return leftIsClientRequest !== rightIsClientRequest
+    && leftHasInternalSender !== rightHasInternalSender;
+};
+
 const messagesHaveCompatibleTelegramIdsForRenderedSend = (left: ChatMessage, right: ChatMessage) =>
   Boolean(left.telegramMessageId) !== Boolean(right.telegramMessageId)
-  || Boolean(left.telegramMessageId && right.telegramMessageId && (left.status === "pending" || right.status === "pending"));
+  || Boolean(left.telegramMessageId && right.telegramMessageId && (left.status === "pending" || right.status === "pending"))
+  || messagesLookLikeAppSendAndTelegramEcho(left, right);
 
 const messagesLookLikeSameRenderedSend = (left: ChatMessage, right: ChatMessage) =>
   left.botId === right.botId
@@ -352,7 +393,7 @@ const mergeMessage = (existing: ChatMessage, incoming: ChatMessage): ChatMessage
   ...existing,
   ...incoming,
   id: chooseMessageId(existing, incoming),
-  telegramMessageId: incoming.telegramMessageId ?? existing.telegramMessageId,
+  telegramMessageId: chooseTelegramMessageId(existing, incoming),
   text: incoming.text ?? existing.text,
   entities: incoming.entities.length > 0 ? incoming.entities : existing.entities,
   sentByInternalUser: incoming.sentByInternalUser ?? existing.sentByInternalUser,
