@@ -57,6 +57,8 @@ pub fn router(state: AppState) -> Router {
         .route("/downloads/{download_id}/resume", post(resume_download))
         .route("/downloads/{download_id}/stop", post(stop_download))
         .route("/files/{file_id}/proxy", get(proxy_file))
+        .route("/qobuz/store/regions", get(list_qobuz_store_regions))
+        .route("/qobuz/store/search/albums", get(search_qobuz_store_albums))
         .route("/settings", get(get_settings).post(update_settings))
         .route("/events/replay", get(replay_events))
         .route("/workspace/files", get(list_workspace_files))
@@ -484,6 +486,35 @@ async fn proxy_file(
         HeaderValue::from_str(&content_length).expect("content length header"),
     );
     Ok(response)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QobuzAlbumSearchQuery {
+    query: Option<String>,
+    region: Option<String>,
+    page: Option<u32>,
+}
+
+async fn list_qobuz_store_regions(
+    State(state): State<AppState>,
+) -> Json<Vec<crate::models::QobuzStoreRegion>> {
+    Json(state.qobuz_store_regions())
+}
+
+async fn search_qobuz_store_albums(
+    State(state): State<AppState>,
+    Query(query): Query<QobuzAlbumSearchQuery>,
+) -> AppResult<Json<crate::models::QobuzAlbumSearchResponse>> {
+    Ok(Json(
+        state
+            .search_qobuz_albums(
+                query.region.as_deref(),
+                query.query.as_deref().unwrap_or_default(),
+                query.page,
+            )
+            .await?,
+    ))
 }
 
 async fn get_settings(State(state): State<AppState>) -> Json<crate::models::Settings> {
@@ -994,6 +1025,66 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_response(response).await;
         assert_eq!(body, json!([]));
+    }
+
+    #[tokio::test]
+    async fn qobuz_regions_endpoint_returns_store_locales_after_login() {
+        let (app, _dir) = test_app().await;
+        let token = admin_token(&app).await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/qobuz/store/regions")
+                    .header(AUTHORIZATION, bearer_header(&token))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_response(response).await;
+        let regions = body.as_array().expect("regions");
+        assert!(regions.iter().any(|region| region["code"] == "jp-ja"));
+        assert!(regions.iter().any(|region| region["code"] == "us-en"));
+    }
+
+    #[tokio::test]
+    async fn qobuz_album_search_validates_request_before_upstream_fetch() {
+        let (app, _dir) = test_app().await;
+        let token = admin_token(&app).await;
+
+        for (uri, expected_code) in [
+            (
+                "/api/qobuz/store/search/albums?region=jp-ja",
+                "missing_qobuz_query",
+            ),
+            (
+                "/api/qobuz/store/search/albums?query=beatles&region=unknown",
+                "invalid_qobuz_region",
+            ),
+            (
+                "/api/qobuz/store/search/albums?query=beatles&region=jp-ja&page=0",
+                "invalid_qobuz_page",
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(AUTHORIZATION, bearer_header(&token))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = json_response(response).await;
+            assert_eq!(body["error"]["code"], expected_code);
+        }
     }
 
     #[tokio::test]

@@ -942,6 +942,54 @@ pub struct TriggerDownloadRequest {
     pub size_bytes: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QobuzStoreRegion {
+    pub code: String,
+    pub country: String,
+    pub language: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QobuzAlbumSearchItem {
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist: Option<String>,
+    pub album_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_date_display: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QobuzAlbumSearchResponse {
+    pub region: QobuzStoreRegion,
+    pub query: String,
+    pub page: u32,
+    pub per_page: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_pages: Option<u32>,
+    pub source_url: String,
+    pub albums: Vec<QobuzAlbumSearchItem>,
+}
+
 pub fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
 }

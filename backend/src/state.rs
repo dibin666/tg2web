@@ -9,10 +9,12 @@ use crate::{
         DownloadItem, DownloadStatus, HistorySyncPolicy, InlineKeyboardClickRequest,
         InlineKeyboardClickResponse, InlineKeyboardMarkup, InternalUser, MeResponse,
         MessageDirection, MessageMedia, MessageStatus, PendingDraft, PublishedBot,
-        SendMessageRequest, Settings, SettingsPatch, TdlibRuntimeState, TelegramAuthState,
-        TelegramChatKind, TelegramEntity, TelegramEntityType, TelegramSetupNextStep,
-        TelegramStatusResponse, TriggerDownloadRequest, WorkspaceFile, WorkspaceFileStatus,
+        QobuzAlbumSearchResponse, QobuzStoreRegion, SendMessageRequest, Settings, SettingsPatch,
+        TdlibRuntimeState, TelegramAuthState, TelegramChatKind, TelegramEntity, TelegramEntityType,
+        TelegramSetupNextStep, TelegramStatusResponse, TriggerDownloadRequest, WorkspaceFile,
+        WorkspaceFileStatus,
     },
+    qobuz::{qobuz_store_regions, QobuzShopClient},
     storage,
     telegram::{TdJsonRuntimeEvent, TelegramBridge, TelegramCredentials},
 };
@@ -37,6 +39,7 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub db: SqlitePool,
     pub auth: AuthService,
+    qobuz_shop: QobuzShopClient,
     telegram_bridge: TelegramBridge,
     runtime: Arc<RwLock<RuntimeState>>,
     events: broadcast::Sender<AppEvent>,
@@ -372,6 +375,7 @@ impl AppState {
             config: Arc::new(config),
             db,
             auth,
+            qobuz_shop: QobuzShopClient::new(),
             telegram_bridge,
             runtime: Arc::new(RwLock::new(runtime)),
             events,
@@ -386,6 +390,19 @@ impl AppState {
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<AppEvent> {
         self.events.subscribe()
+    }
+
+    pub fn qobuz_store_regions(&self) -> Vec<QobuzStoreRegion> {
+        qobuz_store_regions()
+    }
+
+    pub async fn search_qobuz_albums(
+        &self,
+        region: Option<&str>,
+        query: &str,
+        page: Option<u32>,
+    ) -> AppResult<QobuzAlbumSearchResponse> {
+        self.qobuz_shop.search_albums(region, query, page).await
     }
 
     pub fn emit(&self, event: AppEvent) {

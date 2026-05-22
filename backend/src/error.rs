@@ -23,6 +23,8 @@ pub enum AppError {
     Conflict { code: &'static str, message: String },
     #[error("telegram integration unavailable: {message}")]
     TelegramUnavailable { code: &'static str, message: String },
+    #[error("upstream service unavailable: {message}")]
+    UpstreamUnavailable { code: &'static str, message: String },
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
@@ -93,6 +95,13 @@ impl AppError {
         }
     }
 
+    pub fn upstream_unavailable(code: &'static str, message: impl Into<String>) -> Self {
+        Self::UpstreamUnavailable {
+            code,
+            message: message.into(),
+        }
+    }
+
     fn status_and_body(&self) -> (StatusCode, ErrorBody) {
         match self {
             AppError::Config(message) => (
@@ -138,6 +147,13 @@ impl AppError {
                 },
             ),
             AppError::TelegramUnavailable { code, message } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorBody {
+                    code,
+                    message: message.clone(),
+                },
+            ),
+            AppError::UpstreamUnavailable { code, message } => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 ErrorBody {
                     code,

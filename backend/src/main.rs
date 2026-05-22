@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod http;
 mod models;
+mod qobuz;
 mod state;
 mod storage;
 mod telegram;
