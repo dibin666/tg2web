@@ -2,17 +2,17 @@ use crate::{
     error::{AppError, AppResult},
     models::{QobuzAlbumSearchItem, QobuzAlbumSearchResponse, QobuzStoreRegion},
 };
-use regex::Regex;
+use indexmap::IndexMap;
 use reqwest::{
-    header::{ACCEPT, ACCEPT_LANGUAGE},
+    header::{ACCEPT, ACCEPT_LANGUAGE, REFERER},
     StatusCode, Url,
 };
-use scraper::{ElementRef, Html, Selector};
-use std::{collections::HashMap, sync::OnceLock, time::Duration};
+use serde::Deserialize;
+use std::time::Duration;
 
 const QOBUZ_BASE_URL: &str = "https://www.qobuz.com";
 const DEFAULT_QOBUZ_REGION: &str = "jp-ja";
-const QOBUZ_SEARCH_PAGE_SIZE: u32 = 60;
+const QOBUZ_AUTOSUGGEST_PAGE: u32 = 1;
 
 #[derive(Debug, Clone, Copy)]
 struct QobuzStoreRegionSpec {
@@ -241,19 +241,25 @@ pub struct QobuzShopClient {
     http: reqwest::Client,
 }
 
-#[derive(Debug, Default)]
-struct AlbumAccumulator {
-    id: String,
+#[derive(Debug, Deserialize)]
+struct QobuzAutocompleteResponse {
+    #[serde(default)]
+    albums: IndexMap<String, QobuzAutocompleteAlbum>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QobuzAutocompleteAlbum {
+    id: Option<String>,
     title: Option<String>,
     artist: Option<String>,
-    album_url: String,
-    cover_url: Option<String>,
-    price: Option<String>,
-    currency: Option<String>,
-    release_date_display: Option<String>,
-    genre: Option<String>,
-    track_count: Option<u32>,
-    quality: Option<String>,
+    image: Option<String>,
+    url: Option<String>,
+    #[serde(default)]
+    is_hires: bool,
+    #[serde(default)]
+    is_dsd: bool,
+    #[serde(default)]
+    is_dxd: bool,
 }
 
 impl QobuzShopClient {
@@ -282,14 +288,14 @@ impl QobuzShopClient {
         let query = normalize_query(query)?;
         let page = normalize_page(page)?;
         let source_url = album_search_url(region.code, query, page)?;
+        let referer = format!("{QOBUZ_BASE_URL}/{}/shop", region.code);
         let response = self
             .http
             .get(&source_url)
-            .header(
-                ACCEPT,
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            )
+            .header(ACCEPT, "*/*")
             .header(ACCEPT_LANGUAGE, region.accept_language)
+            .header(REFERER, referer)
+            .header("x-requested-with", "XMLHttpRequest")
             .send()
             .await
             .map_err(|error| {
@@ -304,19 +310,27 @@ impl QobuzShopClient {
             return Err(qobuz_status_error(status));
         }
 
-        let html = response.text().await.map_err(|error| {
+        let body = response.text().await.map_err(|error| {
             AppError::upstream_unavailable(
                 "qobuz_unavailable",
                 format!("qobuz search response could not be read: {error}"),
             )
         })?;
 
-        Ok(parse_album_search_html(
+        let autocomplete =
+            serde_json::from_str::<QobuzAutocompleteResponse>(&body).map_err(|error| {
+                AppError::upstream_unavailable(
+                    "qobuz_unavailable",
+                    format!("qobuz search response was not valid JSON: {error}"),
+                )
+            })?;
+
+        Ok(normalize_autosuggest_response(
             region,
             query,
             page,
             &source_url,
-            &html,
+            autocomplete,
         ))
     }
 }
@@ -336,18 +350,15 @@ pub fn album_search_url(region_code: &str, query: &str, page: u32) -> AppResult<
         )
     })?;
     let query = normalize_query(query)?;
-    let page = normalize_page(Some(page))?;
-    let encoded_query = urlencoding::encode(query);
-    let page_part = if page == 1 {
-        String::new()
-    } else {
-        format!("/page/{page}")
-    };
-
-    Ok(format!(
-        "{QOBUZ_BASE_URL}/{}/search/albums/{encoded_query}{page_part}?mode=grid",
+    normalize_page(Some(page))?;
+    let mut url = Url::parse(&format!(
+        "{QOBUZ_BASE_URL}/v4/{}/catalog/search/autosuggest",
         region.code
     ))
+    .expect("static qobuz autosuggest URL is valid");
+    url.query_pairs_mut().append_pair("q", query);
+
+    Ok(url.to_string())
 }
 
 impl QobuzStoreRegionSpec {
@@ -395,11 +406,11 @@ fn normalize_query(query: &str) -> AppResult<&str> {
 }
 
 fn normalize_page(page: Option<u32>) -> AppResult<u32> {
-    let page = page.unwrap_or(1);
-    if page == 0 {
+    let page = page.unwrap_or(QOBUZ_AUTOSUGGEST_PAGE);
+    if page != QOBUZ_AUTOSUGGEST_PAGE {
         return Err(AppError::bad_request(
             "invalid_qobuz_page",
-            "qobuz search page must be at least 1",
+            "qobuz autocomplete search only supports page 1",
         ));
     }
 
@@ -413,292 +424,52 @@ fn qobuz_status_error(status: StatusCode) -> AppError {
     )
 }
 
-fn parse_album_search_html(
+fn normalize_autosuggest_response(
     region: QobuzStoreRegionSpec,
     query: &str,
     page: u32,
     source_url: &str,
-    html: &str,
+    autocomplete: QobuzAutocompleteResponse,
 ) -> QobuzAlbumSearchResponse {
-    let document = Html::parse_document(html);
-    let link_selector = selector("a[href]");
-    let image_selector = selector("img");
-    let body_text = clean_text(&document.root_element().text().collect::<Vec<_>>().join(" "));
-    let total = extract_total_count(&body_text);
-    let total_pages = extract_total_pages(&body_text);
-    let mut order = Vec::<String>::new();
-    let mut albums = HashMap::<String, AlbumAccumulator>::new();
-
-    for anchor in document.select(&link_selector) {
-        let Some(href) = anchor.value().attr("href") else {
-            continue;
-        };
-        let Some((id, album_url)) = album_link(region.code, href) else {
-            continue;
-        };
-
-        if !albums.contains_key(&id) {
-            order.push(id.clone());
-            albums.insert(
-                id.clone(),
-                AlbumAccumulator {
-                    id: id.clone(),
-                    album_url,
-                    ..AlbumAccumulator::default()
-                },
-            );
-        }
-
-        let Some(album) = albums.get_mut(&id) else {
-            continue;
-        };
-
-        if album.title.is_none() {
-            album.title = title_from_anchor(&anchor);
-        }
-        update_from_images(album, anchor.select(&image_selector));
-        update_from_container(album, &anchor, &link_selector, &image_selector);
-    }
-
-    let items = order
+    let albums = autocomplete
+        .albums
         .into_iter()
-        .filter_map(|id| albums.remove(&id))
-        .filter_map(AlbumAccumulator::into_item)
+        .filter_map(|(key, album)| album.into_item(&key))
         .collect::<Vec<_>>();
+    let per_page = albums.len() as u32;
 
     QobuzAlbumSearchResponse {
         region: region.to_model(),
         query: query.to_string(),
         page,
-        per_page: total
-            .and_then(|total| {
-                if total < QOBUZ_SEARCH_PAGE_SIZE {
-                    Some(total)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(QOBUZ_SEARCH_PAGE_SIZE),
-        total,
-        total_pages,
+        per_page,
+        total: None,
+        total_pages: None,
         source_url: source_url.to_string(),
-        albums: items,
+        albums,
     }
 }
 
-impl AlbumAccumulator {
-    fn into_item(self) -> Option<QobuzAlbumSearchItem> {
-        let title = self
-            .title
-            .or_else(|| fallback_title_from_url(&self.album_url))
-            .filter(|title| !title.trim().is_empty())?;
+impl QobuzAutocompleteAlbum {
+    fn into_item(self, fallback_id: &str) -> Option<QobuzAlbumSearchItem> {
+        let id = clean_optional(self.id.as_deref()).unwrap_or_else(|| fallback_id.to_string());
+        let title = clean_optional(self.title.as_deref())?;
+        let album_url = clean_optional(self.url.as_deref()).map(|url| absolute_qobuz_url(&url))?;
 
         Some(QobuzAlbumSearchItem {
-            id: self.id,
+            id,
             title,
-            artist: self.artist,
-            album_url: self.album_url,
-            cover_url: self.cover_url,
-            price: self.price,
-            currency: self.currency,
-            release_date_display: self.release_date_display,
-            genre: self.genre,
-            track_count: self.track_count,
-            quality: self.quality,
+            artist: clean_optional(self.artist.as_deref()),
+            album_url,
+            cover_url: clean_optional(self.image.as_deref()).map(|url| absolute_qobuz_url(&url)),
+            price: None,
+            currency: None,
+            release_date_display: None,
+            genre: None,
+            track_count: None,
+            quality: album_quality(self.is_hires, self.is_dsd, self.is_dxd),
         })
     }
-}
-
-fn update_from_container(
-    album: &mut AlbumAccumulator,
-    anchor: &ElementRef<'_>,
-    link_selector: &Selector,
-    image_selector: &Selector,
-) {
-    for ancestor in anchor.ancestors().skip(1).take(8) {
-        let Some(container) = ElementRef::wrap(ancestor) else {
-            continue;
-        };
-        let text_nodes = text_nodes(&container);
-        let text = clean_text(&text_nodes.join(" "));
-        if text.len() > 3_000 {
-            continue;
-        }
-
-        let has_album_link = container.select(link_selector).any(|link| {
-            link.value()
-                .attr("href")
-                .is_some_and(|href| href == album.album_url)
-        });
-        let has_cover = container.select(image_selector).any(|image| {
-            image
-                .value()
-                .attr("src")
-                .is_some_and(|src| src.contains("images/covers"))
-        });
-        let has_interpreter = container.select(link_selector).any(|link| {
-            link.value()
-                .attr("href")
-                .is_some_and(|href| href.contains("/interpreter/"))
-        });
-        if !has_album_link && !has_cover && !has_interpreter {
-            continue;
-        }
-
-        if album.artist.is_none() {
-            album.artist = artist_from_container(&container, link_selector);
-        }
-        update_from_images(album, container.select(image_selector));
-        update_from_text(album, &text, &text_nodes);
-        break;
-    }
-}
-
-fn update_from_images<'a>(
-    album: &mut AlbumAccumulator,
-    images: impl Iterator<Item = ElementRef<'a>>,
-) {
-    for image in images {
-        if album.cover_url.is_none() {
-            album.cover_url = image
-                .value()
-                .attr("src")
-                .filter(|src| src.contains("images/covers"))
-                .map(absolute_qobuz_url);
-        }
-
-        if album.quality.is_none() {
-            let marker = [
-                image.value().attr("alt").unwrap_or_default(),
-                image.value().attr("title").unwrap_or_default(),
-                image.value().attr("src").unwrap_or_default(),
-            ]
-            .join(" ")
-            .to_lowercase();
-            if marker.contains("hi-res") || marker.contains("hires") {
-                album.quality = Some("hi_res".to_string());
-            }
-        }
-    }
-}
-
-fn update_from_text(album: &mut AlbumAccumulator, text: &str, text_nodes: &[String]) {
-    if album.track_count.is_none() {
-        album.track_count = track_count_regex()
-            .captures(text)
-            .and_then(|captures| captures.get(1))
-            .and_then(|value| value.as_str().replace(',', "").parse::<u32>().ok());
-    }
-
-    if album.price.is_none() {
-        if let Some(captures) = price_regex().captures(text) {
-            let currency = captures.get(1).map(|value| value.as_str().to_string());
-            let amount = captures.get(2).map(|value| value.as_str().to_string());
-            if let (Some(currency), Some(amount)) = (currency, amount) {
-                album.price = Some(format!("{currency}{amount}"));
-                album.currency = Some(currency);
-            }
-        }
-    }
-
-    if album.release_date_display.is_none() {
-        album.release_date_display = release_date_regex()
-            .captures(text)
-            .and_then(|captures| captures.get(1))
-            .map(|value| value.as_str().to_string());
-    }
-
-    if album.genre.is_none() {
-        album.genre = genre_from_nodes(text_nodes, album.release_date_display.as_deref(), album);
-    }
-}
-
-fn artist_from_container(container: &ElementRef<'_>, link_selector: &Selector) -> Option<String> {
-    container.select(link_selector).find_map(|link| {
-        let href = link.value().attr("href")?;
-        if !href.contains("/interpreter/") {
-            return None;
-        }
-        let text = clean_text(&link.text().collect::<Vec<_>>().join(" "));
-        (!text.is_empty()).then_some(text)
-    })
-}
-
-fn title_from_anchor(anchor: &ElementRef<'_>) -> Option<String> {
-    let text = clean_text(&anchor.text().collect::<Vec<_>>().join(" "));
-    if is_good_album_title(&text) {
-        return Some(text);
-    }
-
-    anchor
-        .value()
-        .attr("title")
-        .and_then(title_from_title_attribute)
-        .filter(|title| is_good_album_title(title))
-}
-
-fn title_from_title_attribute(value: &str) -> Option<String> {
-    let value = clean_text(value);
-    if value.is_empty() {
-        return None;
-    }
-
-    if let Some((_, rest)) = value.split_once("by ") {
-        if let Some((title, _)) = rest.split_once(" on Qobuz") {
-            return Some(title.trim().to_string());
-        }
-    }
-
-    if let Some((_, rest)) = value.split_once("による") {
-        if let Some((title, _)) = rest.split_once("の詳細") {
-            return Some(title.trim().to_string());
-        }
-    }
-
-    Some(value)
-}
-
-fn is_good_album_title(value: &str) -> bool {
-    if value.is_empty() || value.len() > 180 {
-        return false;
-    }
-    let normalized = value.to_lowercase();
-    ![
-        "cart",
-        "add to cart",
-        "カート",
-        "tracks",
-        "track",
-        "トラック",
-        "ご利用",
-        "利用",
-        "image",
-        "qobuz",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
-        && !value.contains('¥')
-        && !value.contains('$')
-        && !value.contains('€')
-        && !value.contains('£')
-}
-
-fn album_link(region_code: &str, href: &str) -> Option<(String, String)> {
-    let absolute_url = absolute_qobuz_url(href);
-    let parsed = Url::parse(&absolute_url).ok()?;
-    let segments = parsed.path_segments()?.collect::<Vec<_>>();
-    if segments.len() < 4 {
-        return None;
-    }
-    if !segments[0].eq_ignore_ascii_case(region_code) || segments[1] != "album" {
-        return None;
-    }
-    let id = segments.last()?.trim();
-    if id.is_empty() || id.contains('{') {
-        return None;
-    }
-
-    Some((id.to_string(), parsed.to_string()))
 }
 
 fn absolute_qobuz_url(href: &str) -> String {
@@ -713,150 +484,29 @@ fn absolute_qobuz_url(href: &str) -> String {
     format!("{QOBUZ_BASE_URL}/{href}")
 }
 
-fn fallback_title_from_url(album_url: &str) -> Option<String> {
-    let parsed = Url::parse(album_url).ok()?;
-    let segments = parsed.path_segments()?.collect::<Vec<_>>();
-    let slug = segments.get(2)?;
-    let title = slug
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    (!title.is_empty()).then_some(title)
-}
-
-fn text_nodes(container: &ElementRef<'_>) -> Vec<String> {
-    container
-        .text()
-        .map(clean_text)
-        .filter(|value| !value.is_empty())
-        .collect()
-}
-
-fn genre_from_nodes(
-    text_nodes: &[String],
-    release_date: Option<&str>,
-    album: &AlbumAccumulator,
-) -> Option<String> {
-    let release_date = release_date?;
-    for (index, node) in text_nodes.iter().enumerate() {
-        if !node.contains(release_date) {
-            continue;
-        }
-
-        if let Some((before_release, _)) = node.split_once(release_date) {
-            let candidate = clean_text(before_release);
-            if is_genre_candidate(&candidate, album) {
-                return Some(candidate);
-            }
-        }
-
-        for candidate in text_nodes[..index].iter().rev() {
-            if is_genre_candidate(candidate, album) {
-                return Some(candidate.clone());
-            }
-        }
-    }
-
-    None
-}
-
-fn is_genre_candidate(candidate: &str, album: &AlbumAccumulator) -> bool {
-    if candidate.is_empty() || candidate.len() > 40 {
-        return false;
-    }
-    if album
-        .title
-        .as_deref()
-        .is_some_and(|title| title.eq_ignore_ascii_case(candidate))
-        || album
-            .artist
-            .as_deref()
-            .is_some_and(|artist| artist.eq_ignore_ascii_case(candidate))
-    {
-        return false;
-    }
-
-    let lower = candidate.to_lowercase();
-    !lower.contains("cart")
-        && !candidate.contains("カート")
-        && !candidate.contains('¥')
-        && !candidate.contains('$')
-        && !candidate.contains('€')
-        && !candidate.contains('£')
-        && !track_count_regex().is_match(candidate)
-        && candidate
-            .chars()
-            .any(|character| character.is_alphabetic() || !character.is_ascii())
-}
-
-fn extract_total_count(text: &str) -> Option<u32> {
-    total_count_regex()
-        .captures(text)
-        .and_then(|captures| captures.get(3))
-        .and_then(|value| {
-            value
-                .as_str()
-                .replace([',', '.', ' '], "")
-                .parse::<u32>()
-                .ok()
-        })
-}
-
-fn extract_total_pages(text: &str) -> Option<u32> {
-    total_pages_regex()
-        .captures(text)
-        .and_then(|captures| captures.get(1))
-        .and_then(|value| value.as_str().replace(',', "").parse::<u32>().ok())
-}
-
 fn clean_text(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn selector(value: &str) -> Selector {
-    Selector::parse(value).expect("static CSS selector is valid")
+fn clean_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(clean_text)
+        .filter(|value| !value.trim().is_empty())
 }
 
-fn total_count_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r"(?i)(\d+)\s*-\s*(\d+)\s+of\s+([\d,\.\s]+)\s+(?:albums?|アルバム)")
-            .expect("total count regex is valid")
-    })
-}
+fn album_quality(is_hires: bool, is_dsd: bool, is_dxd: bool) -> Option<String> {
+    let mut quality = Vec::new();
+    if is_hires {
+        quality.push("hi_res");
+    }
+    if is_dsd {
+        quality.push("dsd");
+    }
+    if is_dxd {
+        quality.push("dxd");
+    }
 
-fn total_pages_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r"(?i)page\s+\d+\s+of\s+(\d+)").expect("total pages regex is valid")
-    })
-}
-
-fn track_count_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r"(?i)(\d+)\s*(?:tracks?|トラック)").expect("track count regex is valid")
-    })
-}
-
-fn price_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"([¥$€£])\s?([\d,\.]+)").expect("price regex is valid"))
-}
-
-fn release_date_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        let month =
-            r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
-        Regex::new(
-            &format!(
-                r"((?:\d{{4}}年\d{{1,2}}月\d{{1,2}}日)|(?:\d{{4}}-\d{{2}}-\d{{2}})|(?:\d{{1,2}}\s+{month}\s+\d{{4}})|(?:{month}\s+\d{{1,2}},\s+\d{{4}}))"
-            ),
-        )
-        .expect("release date regex is valid")
-    })
+    (!quality.is_empty()).then(|| quality.join(","))
 }
 
 #[cfg(test)]
@@ -864,14 +514,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn album_search_url_builds_album_only_routes() {
+    fn album_search_url_builds_autosuggest_routes() {
         assert_eq!(
             album_search_url("jp-ja", "beatles mono", 1).expect("page 1"),
-            "https://www.qobuz.com/jp-ja/search/albums/beatles%20mono?mode=grid"
+            "https://www.qobuz.com/v4/jp-ja/catalog/search/autosuggest?q=beatles+mono"
         );
         assert_eq!(
-            album_search_url("us-en", "daft/punk", 3).expect("page 3"),
-            "https://www.qobuz.com/us-en/search/albums/daft%2Fpunk/page/3?mode=grid"
+            album_search_url("us-en", "daft/punk", 1).expect("page 1"),
+            "https://www.qobuz.com/v4/us-en/catalog/search/autosuggest?q=daft%2Fpunk"
         );
     }
 
@@ -892,7 +542,7 @@ mod tests {
             })
         ));
         assert!(matches!(
-            album_search_url("jp-ja", "beatles", 0),
+            album_search_url("jp-ja", "beatles", 2),
             Err(AppError::BadRequest {
                 code: "invalid_qobuz_page",
                 ..
@@ -901,53 +551,91 @@ mod tests {
     }
 
     #[test]
-    fn parse_album_search_html_extracts_album_cards() {
+    fn normalize_autosuggest_response_extracts_album_suggestions_only() {
         let region = region_by_code("jp-ja").expect("region");
-        let html = r#"
-            <html>
-              <body>
-                <h1>"beatles" search results 1-60 of 1000 Albums</h1>
-                <div>Page 1 of 17</div>
-                <article class="album">
-                  <a href="/jp-ja/album/help-the-beatles/0060254767005"
-                     title="The Beatles by Help! (Remastered) on Qobuz">
-                    <img src="https://static.qobuz.com/images/covers/05/70/0060254767005_230.jpg"
-                         alt="The Beatles Help!">
-                  </a>
-                  <a href="/jp-ja/album/help-the-beatles/0060254767005">Help! (Remastered)</a>
-                  <a href="/jp-ja/interpreter/the-beatles/26390">The Beatles</a>
-                  <span>Rock</span>
-                  <span>1965年8月6日</span>
-                  <span>14トラック</span>
-                  <span>¥3,095</span>
-                  <img alt="Hi-Res audio format logo" src="/assets-static/img/quality/hires.png">
-                </article>
-              </body>
-            </html>
+        let body = r#"
+            {
+              "albums": {
+                "kv6tfmvmgn0wb": {
+                  "id": "kv6tfmvmgn0wb",
+                  "title": "Anthology 4",
+                  "artist": "ザ・ビートルズ",
+                  "image": "https://static.qobuz.com/images/covers/wb/n0/kv6tfmvmgn0wb_230.jpg",
+                  "url": "https://www.qobuz.com/jp-ja/album/anthology-4-the-beatles/kv6tfmvmgn0wb",
+                  "url_encoded": "aHR0cHM6Ly93d3cucW9idXouY29t",
+                  "is_hires": true,
+                  "is_dsd": false,
+                  "is_dxd": false
+                },
+                "iafrpq7v7gr2a": {
+                  "id": "iafrpq7v7gr2a",
+                  "title": "Anthology 4",
+                  "artist": "The Beatles",
+                  "image": "/images/covers/2a/gr/iafrpq7v7gr2a_230.jpg",
+                  "url": "/jp-ja/album/anthology-4-the-beatles/iafrpq7v7gr2a",
+                  "is_hires": true,
+                  "is_dsd": true,
+                  "is_dxd": true
+                }
+              },
+              "artists": [
+                {
+                  "id": 26390,
+                  "name": "ザ・ビートルズ"
+                }
+              ],
+              "tracks": [
+                {
+                  "id": 64868955,
+                  "title": "カム・トゥゲザー"
+                }
+              ],
+              "labels": []
+            }
         "#;
+        let autocomplete =
+            serde_json::from_str::<QobuzAutocompleteResponse>(body).expect("autosuggest JSON");
 
-        let response = parse_album_search_html(
+        let response = normalize_autosuggest_response(
             region,
             "beatles",
             1,
-            "https://www.qobuz.com/jp-ja/search/albums/beatles?mode=grid",
-            html,
+            "https://www.qobuz.com/v4/jp-ja/catalog/search/autosuggest?q=beatles",
+            autocomplete,
         );
 
-        assert_eq!(response.total, Some(1000));
-        assert_eq!(response.total_pages, Some(17));
-        assert_eq!(response.albums.len(), 1);
-        assert_eq!(response.albums[0].id, "0060254767005");
-        assert_eq!(response.albums[0].title, "Help! (Remastered)");
-        assert_eq!(response.albums[0].artist.as_deref(), Some("The Beatles"));
-        assert_eq!(response.albums[0].track_count, Some(14));
-        assert_eq!(response.albums[0].price.as_deref(), Some("¥3,095"));
-        assert_eq!(response.albums[0].currency.as_deref(), Some("¥"));
+        assert_eq!(response.region.code, "jp-ja");
+        assert_eq!(response.query, "beatles");
+        assert_eq!(response.page, 1);
+        assert_eq!(response.per_page, 2);
+        assert_eq!(response.total, None);
+        assert_eq!(response.total_pages, None);
+        assert_eq!(response.albums.len(), 2);
+        assert_eq!(response.albums[0].id, "kv6tfmvmgn0wb");
+        assert_eq!(response.albums[0].title, "Anthology 4");
+        assert_eq!(response.albums[0].artist.as_deref(), Some("ザ・ビートルズ"));
         assert_eq!(
-            response.albums[0].release_date_display.as_deref(),
-            Some("1965年8月6日")
+            response.albums[0].album_url,
+            "https://www.qobuz.com/jp-ja/album/anthology-4-the-beatles/kv6tfmvmgn0wb"
         );
-        assert_eq!(response.albums[0].genre.as_deref(), Some("Rock"));
+        assert_eq!(
+            response.albums[0].cover_url.as_deref(),
+            Some("https://static.qobuz.com/images/covers/wb/n0/kv6tfmvmgn0wb_230.jpg")
+        );
+        assert_eq!(response.albums[0].price, None);
+        assert_eq!(response.albums[0].track_count, None);
         assert_eq!(response.albums[0].quality.as_deref(), Some("hi_res"));
+        assert_eq!(
+            response.albums[1].album_url,
+            "https://www.qobuz.com/jp-ja/album/anthology-4-the-beatles/iafrpq7v7gr2a"
+        );
+        assert_eq!(
+            response.albums[1].cover_url.as_deref(),
+            Some("https://www.qobuz.com/images/covers/2a/gr/iafrpq7v7gr2a_230.jpg")
+        );
+        assert_eq!(
+            response.albums[1].quality.as_deref(),
+            Some("hi_res,dsd,dxd")
+        );
     }
 }
