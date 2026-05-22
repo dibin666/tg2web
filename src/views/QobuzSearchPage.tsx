@@ -3,6 +3,33 @@ import { apiClient } from "../api/client";
 import { QobuzStoreRegion, QobuzAlbumSearchResponse } from "../api/types";
 import { Search, Music, ExternalLink, RefreshCw, AlertCircle, ShoppingBag, Disc } from "lucide-react";
 
+const REGION_CN_MAP: Record<string, string> = {
+  "au-en": "澳大利亚 (英文)",
+  "at-de": "奥地利 (德文)",
+  "be-fr": "比利时 (法文)",
+  "be-nl": "比利时 (荷兰文)",
+  "ca-en": "加拿大 (英文)",
+  "ca-fr": "加拿大 (法文)",
+  "dk-en": "丹麦 (英文)",
+  "fi-en": "芬兰 (英文)",
+  "fr-fr": "法国 (法文)",
+  "de-de": "德国 (德文)",
+  "ie-en": "爱尔兰 (英文)",
+  "it-it": "意大利 (意文)",
+  "jp-ja": "日本 (日文)",
+  "lu-de": "卢森堡 (德文)",
+  "lu-fr": "卢森堡 (法文)",
+  "nl-nl": "荷兰 (荷兰文)",
+  "nz-en": "新西兰 (英文)",
+  "no-en": "挪威 (英文)",
+  "es-es": "西班牙 (西班牙文)",
+  "se-en": "瑞典 (英文)",
+  "ch-de": "瑞士 (德文)",
+  "ch-fr": "瑞士 (法文)",
+  "gb-en": "英国 (英文)",
+  "us-en": "美国 (英文)",
+};
+
 export const QobuzSearchPage: React.FC = () => {
   const [regions, setRegions] = useState<QobuzStoreRegion[]>([]);
   const [regionsLoading, setRegionsLoading] = useState(true);
@@ -123,7 +150,7 @@ export const QobuzSearchPage: React.FC = () => {
               >
                 {regions.map((r) => (
                   <option key={r.code} value={r.code}>
-                    {r.label} ({r.country})
+                    {REGION_CN_MAP[r.code] || `${r.label} (${r.country})`}
                   </option>
                 ))}
               </select>
