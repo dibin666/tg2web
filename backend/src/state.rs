@@ -379,6 +379,7 @@ impl AppState {
     pub async fn new(config: AppConfig) -> AppResult<Self> {
         tokio::fs::create_dir_all(&config.media_cache_path).await?;
         tokio::fs::create_dir_all(&config.tdlib_database_path).await?;
+        tokio::fs::create_dir_all(config.tdlib_files_path()).await?;
         let db = storage::connect(&config.database_path).await?;
         let (events, _) = broadcast::channel(512);
         let auth = AuthService::new();
@@ -4093,6 +4094,7 @@ impl AppState {
                 "download requires a numeric TDLib file id from a Telegram media message",
             )
         })?;
+        self.ensure_tdlib_files_directory().await?;
         let credentials = self.telegram_credentials().await?;
         self.telegram_bridge.send_request(
             credentials,
@@ -4114,6 +4116,7 @@ impl AppState {
         file_id: &str,
         context: DownloadMessageContext,
     ) -> AppResult<DownloadItem> {
+        self.ensure_tdlib_files_directory().await?;
         let credentials = self.telegram_credentials().await?;
         match self.telegram_bridge.send_request(
             credentials,
@@ -4157,10 +4160,12 @@ impl AppState {
 
     async fn ensure_download_runtime_started(&self) -> AppResult<()> {
         if self.telegram_bridge.is_runtime_started() {
+            self.ensure_tdlib_files_directory().await?;
             return Ok(());
         }
 
         let credentials = self.telegram_credentials().await?;
+        self.ensure_tdlib_files_directory().await?;
         self.telegram_bridge.reconnect(credentials)?;
         self.mark_telegram_status(
             TelegramAuthState::Reconnecting,
@@ -4516,6 +4521,7 @@ impl AppState {
 
         let (removed_files, removed_bytes) =
             remove_directory_contents(&self.config.media_cache_path).await?;
+        self.ensure_tdlib_files_directory().await?;
 
         sqlx::query("DELETE FROM downloads")
             .execute(&self.db)
@@ -4729,6 +4735,12 @@ impl AppState {
         self.config
             .media_cache_path
             .join(format!("{}.bin", hex_sha256(file_id.as_bytes())))
+    }
+
+    async fn ensure_tdlib_files_directory(&self) -> AppResult<()> {
+        tokio::fs::create_dir_all(self.config.tdlib_files_path())
+            .await
+            .map_err(AppError::from)
     }
 
     async fn message_bot_id(&self, message_id: Option<&str>) -> AppResult<Option<String>> {
@@ -7700,11 +7712,8 @@ mod tests {
         tokio::fs::write(&cache_path, b"ready")
             .await
             .expect("cached file");
-        let tdlib_cache_dir = state
-            .config
-            .media_cache_path
-            .join("tdlib-files")
-            .join("nested");
+        let tdlib_files_dir = state.config.tdlib_files_path();
+        let tdlib_cache_dir = tdlib_files_dir.join("nested");
         tokio::fs::create_dir_all(&tdlib_cache_dir)
             .await
             .expect("tdlib cache dir");
@@ -7737,6 +7746,10 @@ mod tests {
         assert!(tokio::fs::metadata(cache_path).await.is_err());
         assert!(tokio::fs::metadata(tdlib_cache_path).await.is_err());
         assert!(tokio::fs::metadata(tdlib_cache_dir).await.is_err());
+        assert!(tokio::fs::metadata(tdlib_files_dir)
+            .await
+            .expect("tdlib files root")
+            .is_dir());
         assert!(tokio::fs::metadata(&state.config.media_cache_path)
             .await
             .expect("media cache root")

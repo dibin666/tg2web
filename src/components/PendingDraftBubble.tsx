@@ -10,10 +10,11 @@ interface PendingDraftBubbleProps {
 export const PendingDraftBubble: React.FC<PendingDraftBubbleProps> = ({ draft }) => {
   return (
     <div
+      className="message-entry"
       style={{
         display: "flex",
         justifyContent: "flex-start",
-        margin: "12px 0",
+        margin: "4px 0",
         width: "100%",
       }}
     >
@@ -34,7 +35,7 @@ export const PendingDraftBubble: React.FC<PendingDraftBubbleProps> = ({ draft })
             gap: "4px",
             fontSize: "0.7rem",
             color: "var(--accent-blue-hover)",
-            marginBottom: "3px",
+            marginBottom: "2px",
             padding: "0 4px",
             fontWeight: "600",
           }}
@@ -49,10 +50,11 @@ export const PendingDraftBubble: React.FC<PendingDraftBubbleProps> = ({ draft })
             backgroundColor: "var(--bubble-draft)",
             border: "1px dashed var(--accent-blue)",
             borderRadius: "12px 12px 12px 2px",
-            padding: "8px 12px",
+            padding: "6px 10px",
             position: "relative",
             width: "100%",
             boxShadow: "0 0 10px rgba(59, 130, 246, 0.15)",
+            transition: "all 0.25s ease",
           }}
         >
           {/* Main text */}

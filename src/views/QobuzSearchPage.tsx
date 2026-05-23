@@ -361,11 +361,8 @@ export const QobuzSearchPage: React.FC = () => {
                           fontSize: "0.8rem",
                           color: "var(--text-primary)",
                           lineHeight: "1.3",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          display: "-webkit-box",
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: "vertical",
+                          display: "block",
+                          overflowWrap: "anywhere",
                         }}
                         title={album.title}
                       >
@@ -400,6 +397,11 @@ export const QobuzSearchPage: React.FC = () => {
                             <span>发布: {album.releaseDateDisplay}</span>
                           </div>
                         )}
+                        {album.trackCount && (
+                          <div>
+                            <span>曲目: {album.trackCount} 首</span>
+                          </div>
+                        )}
                         {(album.bitDepth || album.sampleRate) && (
                           <div style={{ color: "var(--accent-blue)", fontWeight: "500" }}>
                             {album.bitDepth && <span>{album.bitDepth} Bit</span>}
@@ -424,7 +426,6 @@ export const QobuzSearchPage: React.FC = () => {
                       >
                         <span>
                           {album.genre ? album.genre : ""}
-                          {album.trackCount ? ` • ${album.trackCount}首` : ""}
                         </span>
                         {album.price && (
                           <span style={{ fontWeight: "600", color: "var(--text-primary)", fontSize: "0.72rem" }}>

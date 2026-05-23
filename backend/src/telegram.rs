@@ -21,7 +21,7 @@ pub struct TelegramCredentials {
 #[derive(Clone)]
 pub struct TelegramBridge {
     tdlib_database_path: PathBuf,
-    media_cache_path: PathBuf,
+    tdlib_files_path: PathBuf,
     tdlib_encryption_key_ref: Option<String>,
     runtime: Arc<Mutex<Option<tdjson::TdJsonRuntime>>>,
     updates: broadcast::Sender<TdJsonRuntimeEvent>,
@@ -32,7 +32,7 @@ impl TelegramBridge {
         let (updates, _) = broadcast::channel(512);
         Self {
             tdlib_database_path: config.tdlib_database_path.clone(),
-            media_cache_path: config.media_cache_path.clone(),
+            tdlib_files_path: config.tdlib_files_path(),
             tdlib_encryption_key_ref: config.tdlib_encryption_key_ref.clone(),
             runtime: Arc::new(Mutex::new(None)),
             updates,
@@ -139,7 +139,7 @@ impl TelegramBridge {
         credentials: TelegramCredentials,
     ) -> AppResult<tdjson::TdlibParameters> {
         let database_directory = self.tdlib_database_path.join("main");
-        let files_directory = self.media_cache_path.join("tdlib-files");
+        let files_directory = self.tdlib_files_path.clone();
         std::fs::create_dir_all(&database_directory)?;
         std::fs::create_dir_all(&files_directory)?;
 

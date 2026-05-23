@@ -145,6 +145,7 @@ const translations = {
     neverLogin: "从未登录",
     revokeBtn: "撤销",
     sentViaKey: "发送者密钥:",
+    messageDeleted: "[消息已删除]",
   },
   en: {
     // LoginPage
@@ -182,6 +183,7 @@ const translations = {
     attachmentUnavailable: "Attachment upload is not enabled yet",
     attachTooltip: "Attach media/file placeholder",
     send: "Send",
+    messageDeleted: "[Message Deleted]",
     
     // WorkspacePage (File History)
     fileHistoryTitle: "File History",

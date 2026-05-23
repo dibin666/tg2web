@@ -2,17 +2,20 @@ use crate::{
     error::{AppError, AppResult},
     models::{QobuzAlbumSearchItem, QobuzAlbumSearchResponse, QobuzStoreRegion},
 };
+use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use reqwest::{
     header::{ACCEPT, ACCEPT_LANGUAGE, REFERER},
     StatusCode, Url,
 };
 use serde::Deserialize;
+use serde_json::Value;
 use std::time::Duration;
 
 const QOBUZ_BASE_URL: &str = "https://www.qobuz.com";
 const DEFAULT_QOBUZ_REGION: &str = "jp-ja";
-const QOBUZ_AUTOSUGGEST_PAGE: u32 = 1;
+const QOBUZ_DEFAULT_PAGE: u32 = 1;
+const QOBUZ_RELEASE_DATE_NOON_OFFSET_SECONDS: i64 = 12 * 60 * 60;
 
 #[derive(Debug, Clone, Copy)]
 struct QobuzStoreRegionSpec {
@@ -200,24 +203,57 @@ pub struct QobuzShopClient {
 }
 
 #[derive(Debug, Deserialize)]
-struct QobuzAutocompleteResponse {
+#[serde(rename_all = "camelCase")]
+struct QobuzSearchLiveProps {
     #[serde(default)]
-    albums: IndexMap<String, QobuzAutocompleteAlbum>,
+    albums: String,
+    pagination_data: Option<QobuzSearchPaginationData>,
 }
 
 #[derive(Debug, Deserialize)]
-struct QobuzAutocompleteAlbum {
+#[serde(rename_all = "camelCase")]
+struct QobuzSearchPaginationData {
+    current_page: Option<u32>,
+    total_pages: Option<u32>,
+    total_results: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QobuzSearchAlbum {
     id: Option<String>,
+    slug: Option<String>,
+    image: Option<QobuzSearchImage>,
     title: Option<String>,
-    artist: Option<String>,
-    image: Option<String>,
-    url: Option<String>,
     #[serde(default)]
-    is_hires: bool,
+    artists: Vec<QobuzSearchArtist>,
+    genre: Option<QobuzSearchNamedValue>,
+    released_at: Option<Value>,
+    tracks_count: Option<u32>,
     #[serde(default)]
-    is_dsd: bool,
+    has_hires_logo: bool,
     #[serde(default)]
-    is_dxd: bool,
+    has_dsd_logo: bool,
+    #[serde(default)]
+    has_dxd_logo: bool,
+    bit_depth: Option<String>,
+    sampling_rate: Option<String>,
+    price: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QobuzSearchImage {
+    small: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QobuzSearchArtist {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QobuzSearchNamedValue {
+    name: Option<String>,
 }
 
 impl QobuzShopClient {
@@ -250,10 +286,12 @@ impl QobuzShopClient {
         let response = self
             .http
             .get(&source_url)
-            .header(ACCEPT, "*/*")
+            .header(
+                ACCEPT,
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            )
             .header(ACCEPT_LANGUAGE, region.accept_language)
             .header(REFERER, referer)
-            .header("x-requested-with", "XMLHttpRequest")
             .send()
             .await
             .map_err(|error| {
@@ -275,87 +313,7 @@ impl QobuzShopClient {
             )
         })?;
 
-        let autocomplete =
-            serde_json::from_str::<QobuzAutocompleteResponse>(&body).map_err(|error| {
-                AppError::upstream_unavailable(
-                    "qobuz_unavailable",
-                    format!("qobuz search response was not valid JSON: {error}"),
-                )
-            })?;
-
-        let mut result =
-            normalize_autosuggest_response(region, query, page, &source_url, autocomplete);
-
-        let mut tasks = Vec::new();
-        for album in &result.albums {
-            let client = self.clone();
-            let url = album.album_url.clone();
-            let accept_lang = region.accept_language.to_string();
-            tasks.push(tokio::spawn(async move {
-                client.fetch_album_details(&url, &accept_lang).await
-            }));
-        }
-
-        let results = futures_util::future::join_all(tasks).await;
-        for (i, res) in results.into_iter().enumerate() {
-            if let Ok((release_date, bit_depth, sample_rate)) = res {
-                if let Some(album) = result.albums.get_mut(i) {
-                    album.release_date_display = release_date;
-                    album.bit_depth = bit_depth;
-                    album.sample_rate = sample_rate;
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
-    async fn fetch_album_details(
-        &self,
-        url: &str,
-        accept_language: &str,
-    ) -> (Option<String>, Option<u32>, Option<String>) {
-        let response = match self
-            .http
-            .get(url)
-            .header(ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-            .header(ACCEPT_LANGUAGE, accept_language)
-            .send()
-            .await
-        {
-            Ok(res) => res,
-            Err(_) => return (None, None, None),
-        };
-
-        if !response.status().is_success() {
-            return (None, None, None);
-        }
-
-        let text = match response.text().await {
-            Ok(t) => t,
-            Err(_) => return (None, None, None),
-        };
-
-        let re_date = regex::Regex::new(r#""releaseDate"\s*:\s*"([^"]+)""#).unwrap();
-        let release_date = re_date
-            .captures(&text)
-            .map(|caps| caps.get(1).unwrap().as_str().to_string());
-
-        let re_quality =
-            regex::Regex::new(r#"class="album-quality__info"\s*>\s*([^<]+)\s*</span>"#).unwrap();
-        let mut bits = None;
-        let mut sampling = None;
-        for caps in re_quality.captures_iter(&text) {
-            let s = caps.get(1).unwrap().as_str().trim();
-            let re_parse = regex::Regex::new(r#"(\d+)-Bit/(\d+(?:\.\d+)?)\s*(?:kHz|khz)"#).unwrap();
-            if let Some(c) = re_parse.captures(s) {
-                bits = c.get(1).unwrap().as_str().parse::<u32>().ok();
-                sampling = Some(c.get(2).unwrap().as_str().to_string());
-                break;
-            }
-        }
-
-        (release_date, bits, sampling)
+        normalize_search_page_response(region, query, page, &source_url, &body)
     }
 }
 
@@ -374,13 +332,22 @@ pub fn album_search_url(region_code: &str, query: &str, page: u32) -> AppResult<
         )
     })?;
     let query = normalize_query(query)?;
-    normalize_page(Some(page))?;
-    let mut url = Url::parse(&format!(
-        "{QOBUZ_BASE_URL}/v4/{}/catalog/search/autosuggest",
-        region.code
-    ))
-    .expect("static qobuz autosuggest URL is valid");
-    url.query_pairs_mut().append_pair("q", query);
+    let page = normalize_page(Some(page))?;
+    let mut url = Url::parse(QOBUZ_BASE_URL).expect("static qobuz base URL is valid");
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .expect("qobuz base URL supports path segments");
+        segments
+            .push(region.code)
+            .push("search")
+            .push("albums")
+            .push(query);
+        if page > QOBUZ_DEFAULT_PAGE {
+            segments.push("page").push(&page.to_string());
+        }
+    }
+    url.query_pairs_mut().append_pair("mode", "grid");
 
     Ok(url.to_string())
 }
@@ -430,11 +397,11 @@ fn normalize_query(query: &str) -> AppResult<&str> {
 }
 
 fn normalize_page(page: Option<u32>) -> AppResult<u32> {
-    let page = page.unwrap_or(QOBUZ_AUTOSUGGEST_PAGE);
-    if page != QOBUZ_AUTOSUGGEST_PAGE {
+    let page = page.unwrap_or(QOBUZ_DEFAULT_PAGE);
+    if page == 0 {
         return Err(AppError::bad_request(
             "invalid_qobuz_page",
-            "qobuz autocomplete search only supports page 1",
+            "qobuz search page must be greater than 0",
         ));
     }
 
@@ -448,52 +415,101 @@ fn qobuz_status_error(status: StatusCode) -> AppError {
     )
 }
 
-fn normalize_autosuggest_response(
+fn normalize_search_page_response(
     region: QobuzStoreRegionSpec,
     query: &str,
     page: u32,
     source_url: &str,
-    autocomplete: QobuzAutocompleteResponse,
-) -> QobuzAlbumSearchResponse {
-    let albums = autocomplete
-        .albums
+    body: &str,
+) -> AppResult<QobuzAlbumSearchResponse> {
+    let raw_props = extract_catalog_search_live_props(body).ok_or_else(|| {
+        AppError::upstream_unavailable(
+            "qobuz_unavailable",
+            "qobuz search page did not include catalog search result data",
+        )
+    })?;
+    let props_json = html_unescape(raw_props);
+    let props = serde_json::from_str::<QobuzSearchLiveProps>(&props_json).map_err(|error| {
+        AppError::upstream_unavailable(
+            "qobuz_unavailable",
+            format!("qobuz search result data was not valid JSON: {error}"),
+        )
+    })?;
+    let album_map = if props.albums.trim().is_empty() {
+        IndexMap::new()
+    } else {
+        serde_json::from_str::<IndexMap<String, QobuzSearchAlbum>>(&props.albums).map_err(
+            |error| {
+                AppError::upstream_unavailable(
+                    "qobuz_unavailable",
+                    format!("qobuz album search data was not valid JSON: {error}"),
+                )
+            },
+        )?
+    };
+    let albums = album_map
         .into_iter()
-        .filter_map(|(key, album)| album.into_item(&key))
+        .filter_map(|(key, album)| album.into_item(region, &key))
         .collect::<Vec<_>>();
     let per_page = albums.len() as u32;
+    let pagination = props.pagination_data;
 
-    QobuzAlbumSearchResponse {
+    Ok(QobuzAlbumSearchResponse {
         region: region.to_model(),
         query: query.to_string(),
-        page,
+        page: pagination
+            .as_ref()
+            .and_then(|data| data.current_page)
+            .unwrap_or(page),
         per_page,
-        total: None,
-        total_pages: None,
+        total: pagination.as_ref().and_then(|data| data.total_results),
+        total_pages: pagination.as_ref().and_then(|data| data.total_pages),
         source_url: source_url.to_string(),
         albums,
-    }
+    })
 }
 
-impl QobuzAutocompleteAlbum {
-    fn into_item(self, fallback_id: &str) -> Option<QobuzAlbumSearchItem> {
-        let id = clean_optional(self.id.as_deref()).unwrap_or_else(|| fallback_id.to_string());
-        let title = clean_optional(self.title.as_deref())?;
-        let album_url = clean_optional(self.url.as_deref()).map(|url| absolute_qobuz_url(&url))?;
+impl QobuzSearchAlbum {
+    fn into_item(
+        self,
+        region: QobuzStoreRegionSpec,
+        fallback_id: &str,
+    ) -> Option<QobuzAlbumSearchItem> {
+        let id = clean_optional_html(self.id.as_deref()).unwrap_or_else(|| fallback_id.to_string());
+        let slug = clean_optional_html(self.slug.as_deref())?;
+        let title = clean_optional_html(self.title.as_deref())?;
+        let album_url = format!("{QOBUZ_BASE_URL}/{}/album/{slug}/{id}", region.code);
+        let artist = self
+            .artists
+            .into_iter()
+            .filter_map(|artist| clean_optional_html(artist.name.as_deref()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let price = price_to_string(self.price.as_ref());
+        let currency = price
+            .as_ref()
+            .and_then(|_| currency_symbol(region.code))
+            .map(str::to_string);
 
         Some(QobuzAlbumSearchItem {
             id,
             title,
-            artist: clean_optional(self.artist.as_deref()),
+            artist: (!artist.is_empty()).then_some(artist),
             album_url,
-            cover_url: clean_optional(self.image.as_deref()).map(|url| absolute_qobuz_url(&url)),
-            price: None,
-            currency: None,
-            release_date_display: None,
-            genre: None,
-            track_count: None,
-            quality: album_quality(self.is_hires, self.is_dsd, self.is_dxd),
-            bit_depth: None,
-            sample_rate: None,
+            cover_url: self
+                .image
+                .and_then(|image| clean_optional_html(image.small.as_deref()))
+                .map(|url| absolute_qobuz_url(&url)),
+            price,
+            currency,
+            release_date_display: release_date_display(self.released_at.as_ref()),
+            genre: self
+                .genre
+                .and_then(|genre| clean_optional_html(genre.name.as_deref())),
+            track_count: self.tracks_count,
+            quality: album_quality(self.has_hires_logo, self.has_dsd_logo, self.has_dxd_logo),
+            bit_depth: parse_bit_depth(self.bit_depth.as_deref()),
+            sample_rate: parse_sample_rate(self.sampling_rate.as_deref()),
         })
     }
 }
@@ -514,10 +530,200 @@ fn clean_text(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn clean_optional(value: Option<&str>) -> Option<String> {
+fn clean_optional_html(value: Option<&str>) -> Option<String> {
     value
-        .map(clean_text)
+        .map(html_unescape)
+        .map(|value| clean_text(&value))
         .filter(|value| !value.trim().is_empty())
+}
+
+fn extract_catalog_search_live_props(body: &str) -> Option<&str> {
+    let marker = r#"data-live-name-value="pages:catalog-search-results""#;
+    let mut offset = 0;
+
+    while let Some(relative_index) = body[offset..].find(marker) {
+        let marker_index = offset + relative_index;
+        let tag_start = body[..marker_index].rfind('<').unwrap_or(marker_index);
+        let tag_end = body[marker_index..]
+            .find('>')
+            .map(|index| marker_index + index)
+            .unwrap_or(body.len());
+        let tag = &body[tag_start..tag_end];
+
+        if let Some(value) = extract_html_attr(tag, "data-live-props-value") {
+            return Some(value);
+        }
+
+        offset = marker_index + marker.len();
+    }
+
+    None
+}
+
+fn extract_html_attr<'a>(tag: &'a str, attr: &str) -> Option<&'a str> {
+    let needle = format!(r#"{attr}=""#);
+    let start = tag.find(&needle)? + needle.len();
+    let end = tag[start..].find('"')? + start;
+    Some(&tag[start..end])
+}
+
+fn html_unescape(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(entity_start) = rest.find('&') {
+        decoded.push_str(&rest[..entity_start]);
+        let after_amp = &rest[entity_start + 1..];
+
+        if let Some(entity_end) = after_amp.find(';') {
+            let entity = &after_amp[..entity_end];
+            if let Some(replacement) = decode_html_entity(entity) {
+                decoded.push_str(&replacement);
+                rest = &after_amp[entity_end + 1..];
+                continue;
+            }
+        }
+
+        decoded.push('&');
+        rest = after_amp;
+    }
+
+    decoded.push_str(rest);
+    decoded
+}
+
+fn decode_html_entity(entity: &str) -> Option<String> {
+    match entity {
+        "quot" => Some("\"".to_string()),
+        "amp" => Some("&".to_string()),
+        "apos" => Some("'".to_string()),
+        "lt" => Some("<".to_string()),
+        "gt" => Some(">".to_string()),
+        "nbsp" => Some(" ".to_string()),
+        _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+            u32::from_str_radix(&entity[2..], 16)
+                .ok()
+                .and_then(char::from_u32)
+                .map(|value| value.to_string())
+        }
+        _ if entity.starts_with('#') => entity[1..]
+            .parse::<u32>()
+            .ok()
+            .and_then(char::from_u32)
+            .map(|value| value.to_string()),
+        _ => None,
+    }
+}
+
+fn release_date_display(value: Option<&Value>) -> Option<String> {
+    let seconds = json_value_to_i64(value?)?;
+    let adjusted = seconds
+        .checked_add(QOBUZ_RELEASE_DATE_NOON_OFFSET_SECONDS)
+        .unwrap_or(seconds);
+    DateTime::<Utc>::from_timestamp(adjusted, 0)
+        .map(|datetime| datetime.format("%Y-%m-%d").to_string())
+}
+
+fn json_value_to_i64(value: &Value) -> Option<i64> {
+    match value {
+        Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok())),
+        Value::String(value) => value.trim().parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+fn price_to_string(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::Number(number) => price_number_to_string(number),
+        Value::String(value) => clean_optional_html(Some(value)),
+        _ => None,
+    }
+}
+
+fn price_number_to_string(number: &serde_json::Number) -> Option<String> {
+    if let Some(value) = number.as_u64() {
+        return Some(group_price_digits(&value.to_string()));
+    }
+    if let Some(value) = number.as_i64() {
+        let sign = if value < 0 { "-" } else { "" };
+        return Some(format!(
+            "{sign}{}",
+            group_price_digits(&value.abs().to_string())
+        ));
+    }
+    number.as_f64().map(|value| {
+        let mut formatted = format!("{value:.2}");
+        while formatted.contains('.') && formatted.ends_with('0') {
+            formatted.pop();
+        }
+        if formatted.ends_with('.') {
+            formatted.pop();
+        }
+        group_decimal_price(&formatted)
+    })
+}
+
+fn group_decimal_price(value: &str) -> String {
+    if let Some((integer, fraction)) = value.split_once('.') {
+        if fraction.is_empty() {
+            group_price_digits(integer)
+        } else {
+            format!("{}.{}", group_price_digits(integer), fraction)
+        }
+    } else {
+        group_price_digits(value)
+    }
+}
+
+fn group_price_digits(value: &str) -> String {
+    let (sign, digits) = value
+        .strip_prefix('-')
+        .map(|digits| ("-", digits))
+        .unwrap_or(("", value));
+    let mut grouped = String::with_capacity(value.len() + value.len() / 3);
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(ch);
+    }
+    let grouped = grouped.chars().rev().collect::<String>();
+    format!("{sign}{grouped}")
+}
+
+fn currency_symbol(region_code: &str) -> Option<&'static str> {
+    match region_code {
+        "jp-ja" => Some("¥"),
+        "gb-en" => Some("£"),
+        "ch-de" | "ch-fr" => Some("CHF "),
+        "dk-en" | "no-en" | "se-en" => Some("kr "),
+        "au-en" => Some("A$"),
+        "ca-en" | "ca-fr" => Some("C$"),
+        "nz-en" => Some("NZ$"),
+        "us-en" => Some("$"),
+        "at-de" | "be-fr" | "be-nl" | "fi-en" | "fr-fr" | "de-de" | "ie-en" | "it-it" | "lu-de"
+        | "lu-fr" | "nl-nl" | "es-es" => Some("€"),
+        _ => None,
+    }
+}
+
+fn parse_bit_depth(value: Option<&str>) -> Option<u32> {
+    value?
+        .split(|ch: char| !ch.is_ascii_digit())
+        .find(|part| !part.is_empty())
+        .and_then(|part| part.parse::<u32>().ok())
+}
+
+fn parse_sample_rate(value: Option<&str>) -> Option<String> {
+    let value = clean_optional_html(value)?;
+    let value = value
+        .replace("kHz", "")
+        .replace("khz", "")
+        .replace("KHz", "");
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn album_quality(is_hires: bool, is_dsd: bool, is_dxd: bool) -> Option<String> {
@@ -540,7 +746,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn store_regions_exclude_empty_album_autosuggest_regions() {
+    fn store_regions_exclude_empty_album_search_regions() {
         let regions = qobuz_store_regions();
         let removed_codes = ["ar-es", "br-pt", "cl-es", "co-es", "mx-es", "pt-pt"];
 
@@ -558,14 +764,14 @@ mod tests {
     }
 
     #[test]
-    fn album_search_url_builds_autosuggest_routes() {
+    fn album_search_url_builds_full_album_search_routes() {
         assert_eq!(
             album_search_url("jp-ja", "beatles mono", 1).expect("page 1"),
-            "https://www.qobuz.com/v4/jp-ja/catalog/search/autosuggest?q=beatles+mono"
+            "https://www.qobuz.com/jp-ja/search/albums/beatles%20mono?mode=grid"
         );
         assert_eq!(
-            album_search_url("us-en", "daft/punk", 1).expect("page 1"),
-            "https://www.qobuz.com/v4/us-en/catalog/search/autosuggest?q=daft%2Fpunk"
+            album_search_url("us-en", "daft/punk", 2).expect("page 2"),
+            "https://www.qobuz.com/us-en/search/albums/daft%2Fpunk/page/2?mode=grid"
         );
     }
 
@@ -586,170 +792,177 @@ mod tests {
             })
         ));
         assert!(matches!(
-            album_search_url("jp-ja", "beatles", 2),
+            album_search_url("jp-ja", "beatles", 0),
             Err(AppError::BadRequest {
                 code: "invalid_qobuz_page",
                 ..
             })
         ));
+        assert!(album_search_url("jp-ja", "beatles", 2).is_ok());
     }
 
     #[test]
-    fn normalize_autosuggest_response_extracts_album_suggestions_only() {
+    fn normalize_search_page_response_extracts_full_album_results() {
         let region = region_by_code("jp-ja").expect("region");
-        let body = r#"
-            {
-              "albums": {
-                "kv6tfmvmgn0wb": {
-                  "id": "kv6tfmvmgn0wb",
-                  "title": "Anthology 4",
-                  "artist": "ザ・ビートルズ",
-                  "image": "https://static.qobuz.com/images/covers/wb/n0/kv6tfmvmgn0wb_230.jpg",
-                  "url": "https://www.qobuz.com/jp-ja/album/anthology-4-the-beatles/kv6tfmvmgn0wb",
-                  "url_encoded": "aHR0cHM6Ly93d3cucW9idXouY29t",
-                  "is_hires": true,
-                  "is_dsd": false,
-                  "is_dxd": false
-                },
-                "iafrpq7v7gr2a": {
-                  "id": "iafrpq7v7gr2a",
-                  "title": "Anthology 4",
-                  "artist": "The Beatles",
-                  "image": "/images/covers/2a/gr/iafrpq7v7gr2a_230.jpg",
-                  "url": "/jp-ja/album/anthology-4-the-beatles/iafrpq7v7gr2a",
-                  "is_hires": true,
-                  "is_dsd": true,
-                  "is_dxd": true
-                }
-              },
-              "artists": [
-                {
-                  "id": 26390,
-                  "name": "ザ・ビートルズ"
-                }
-              ],
-              "tracks": [
-                {
-                  "id": 64868955,
-                  "title": "カム・トゥゲザー"
-                }
-              ],
-              "labels": []
+        let albums = serde_json::json!({
+            "xywvdso23l96a": {
+                "id": "xywvdso23l96a",
+                "slug": "one-deep-river-mark-knopfler",
+                "image": { "small": "https://static.qobuz.com/images/covers/6a/l9/xywvdso23l96a_230.jpg" },
+                "title": "One Deep River (Deluxe)",
+                "artists": [{ "id": "12051", "slug": "mark-knopfler", "name": "Mark Knopfler" }],
+                "genre": { "id": "119", "slug": "rock", "name": "Rock" },
+                "releasedAt": "1712872800",
+                "tracksCount": 21,
+                "hasHiresLogo": true,
+                "hasDsdLogo": false,
+                "hasDxdLogo": false,
+                "bitDepth": "24-Bit",
+                "samplingRate": "192 kHz",
+                "price": 3749
+            },
+            "rh10buxv8ekda": {
+                "id": "rh10buxv8ekda",
+                "slug": "the-yellow-river-the-butterfly-lovers-jie-chen-new-zealand-symphony-orchestra-carolyn-kuan",
+                "image": { "small": "/images/covers/da/ek/rh10buxv8ekda_230.jpg" },
+                "title": "The Yellow River &amp; The Butterfly Lovers",
+                "artists": [
+                    { "id": "33672", "slug": "jie-chen", "name": "Jie Chen" },
+                    { "id": "80862", "slug": "carolyn-kuan", "name": "Carolyn Kuan" }
+                ],
+                "genre": { "id": "10", "slug": "classique", "name": "Classique" },
+                "releasedAt": "1349128800",
+                "tracksCount": 5,
+                "hasHiresLogo": true,
+                "hasDsdLogo": true,
+                "hasDxdLogo": false,
+                "bitDepth": "24-Bit",
+                "samplingRate": "96 kHz",
+                "price": 1920
             }
-        "#;
-        let autocomplete =
-            serde_json::from_str::<QobuzAutocompleteResponse>(body).expect("autosuggest JSON");
-
-        let response = normalize_autosuggest_response(
-            region,
-            "beatles",
-            1,
-            "https://www.qobuz.com/v4/jp-ja/catalog/search/autosuggest?q=beatles",
-            autocomplete,
+        })
+        .to_string();
+        let live_props = serde_json::json!({
+            "mode": "grid",
+            "albums": albums,
+            "paginationData": {
+                "currentPage": 1,
+                "totalPages": 17,
+                "totalResults": 1000
+            }
+        })
+        .to_string();
+        let body = format!(
+            r#"<div data-controller="eqho--pages--catalog-search-results live" data-live-name-value="pages:catalog-search-results" data-live-props-value="{}"></div>"#,
+            html_escape_attr(&live_props)
         );
+
+        let response = normalize_search_page_response(
+            region,
+            "River",
+            1,
+            "https://www.qobuz.com/jp-ja/search/albums/River?mode=grid",
+            &body,
+        )
+        .expect("search page response");
 
         assert_eq!(response.region.code, "jp-ja");
-        assert_eq!(response.query, "beatles");
+        assert_eq!(response.query, "River");
         assert_eq!(response.page, 1);
         assert_eq!(response.per_page, 2);
-        assert_eq!(response.total, None);
-        assert_eq!(response.total_pages, None);
+        assert_eq!(response.total, Some(1000));
+        assert_eq!(response.total_pages, Some(17));
         assert_eq!(response.albums.len(), 2);
-        assert_eq!(response.albums[0].id, "kv6tfmvmgn0wb");
-        assert_eq!(response.albums[0].title, "Anthology 4");
-        assert_eq!(response.albums[0].artist.as_deref(), Some("ザ・ビートルズ"));
+        let deluxe = response
+            .albums
+            .iter()
+            .find(|album| album.id == "xywvdso23l96a")
+            .expect("deluxe album");
+        assert_eq!(deluxe.title, "One Deep River (Deluxe)");
+        assert_eq!(deluxe.artist.as_deref(), Some("Mark Knopfler"));
         assert_eq!(
-            response.albums[0].album_url,
-            "https://www.qobuz.com/jp-ja/album/anthology-4-the-beatles/kv6tfmvmgn0wb"
+            deluxe.album_url,
+            "https://www.qobuz.com/jp-ja/album/one-deep-river-mark-knopfler/xywvdso23l96a"
         );
         assert_eq!(
-            response.albums[0].cover_url.as_deref(),
-            Some("https://static.qobuz.com/images/covers/wb/n0/kv6tfmvmgn0wb_230.jpg")
+            deluxe.cover_url.as_deref(),
+            Some("https://static.qobuz.com/images/covers/6a/l9/xywvdso23l96a_230.jpg")
         );
-        assert_eq!(response.albums[0].price, None);
-        assert_eq!(response.albums[0].track_count, None);
-        assert_eq!(response.albums[0].quality.as_deref(), Some("hi_res"));
+        assert_eq!(deluxe.price.as_deref(), Some("3,749"));
+        assert_eq!(deluxe.currency.as_deref(), Some("¥"));
+        assert_eq!(deluxe.release_date_display.as_deref(), Some("2024-04-12"));
+        assert_eq!(deluxe.genre.as_deref(), Some("Rock"));
+        assert_eq!(deluxe.track_count, Some(21));
+        assert_eq!(deluxe.quality.as_deref(), Some("hi_res"));
+        assert_eq!(deluxe.bit_depth, Some(24));
+        assert_eq!(deluxe.sample_rate.as_deref(), Some("192"));
+
+        let yellow_river = response
+            .albums
+            .iter()
+            .find(|album| album.id == "rh10buxv8ekda")
+            .expect("yellow river album");
         assert_eq!(
-            response.albums[1].album_url,
-            "https://www.qobuz.com/jp-ja/album/anthology-4-the-beatles/iafrpq7v7gr2a"
+            yellow_river.title,
+            "The Yellow River & The Butterfly Lovers"
         );
         assert_eq!(
-            response.albums[1].cover_url.as_deref(),
-            Some("https://www.qobuz.com/images/covers/2a/gr/iafrpq7v7gr2a_230.jpg")
+            yellow_river.artist.as_deref(),
+            Some("Jie Chen, Carolyn Kuan")
         );
         assert_eq!(
-            response.albums[1].quality.as_deref(),
-            Some("hi_res,dsd,dxd")
+            yellow_river.album_url,
+            "https://www.qobuz.com/jp-ja/album/the-yellow-river-the-butterfly-lovers-jie-chen-new-zealand-symphony-orchestra-carolyn-kuan/rh10buxv8ekda"
         );
+        assert_eq!(
+            yellow_river.cover_url.as_deref(),
+            Some("https://www.qobuz.com/images/covers/da/ek/rh10buxv8ekda_230.jpg")
+        );
+        assert_eq!(yellow_river.quality.as_deref(), Some("hi_res,dsd"));
     }
 
     #[tokio::test]
     #[ignore = "live Qobuz debug probe; run manually when re-verifying upstream markup"]
-    async fn test_print_raw_autosuggest() {
+    async fn test_print_raw_search_page() {
         let client = QobuzShopClient::new();
         let region = "jp-ja";
-        let query = "beatles";
+        let query = "River";
         let url = album_search_url(region, query, 1).unwrap();
         let response = client
             .http
             .get(&url)
-            .header("accept", "*/*")
+            .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
             .header("accept-language", "ja-JP,ja;q=0.9,en;q=0.8")
             .header("referer", "https://www.qobuz.com/jp-ja/shop")
-            .header("x-requested-with", "XMLHttpRequest")
             .send()
             .await
             .unwrap();
         let text = response.text().await.unwrap();
-        println!("RAW AUTOSUGGEST RESPONSE:\n{}", text);
+        println!("RAW SEARCH PAGE RESPONSE:\n{}", text);
     }
 
     #[tokio::test]
-    #[ignore = "live Qobuz debug probe; run manually when re-verifying upstream markup"]
-    async fn test_fetch_album_page() {
+    #[ignore = "live Qobuz region probe; run manually when re-verifying upstream availability"]
+    async fn test_live_all_store_regions_search_river() {
         let client = QobuzShopClient::new();
-        let urls = [
-            "https://www.qobuz.com/jp-ja/album/anthology-4-the-beatles/kv6tfmvmgn0wb",
-            "https://www.qobuz.com/jp-ja/album/anthology-4-the-beatles/iafrpq7v7gr2a",
-        ];
-        for url in urls {
-            let response = client.http.get(url)
-                .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-                .header("accept-language", "ja-JP,ja;q=0.9,en;q=0.8")
-                .send()
+        for region in QOBUZ_STORE_REGIONS {
+            let response = client
+                .search_albums(Some(region.code), "River", Some(1))
                 .await
-                .unwrap();
-            let text = response.text().await.unwrap();
-
-            // Release date regex
-            let re_date = regex::Regex::new(r#""releaseDate"\s*:\s*"([^"]+)""#).unwrap();
-            let release_date = re_date
-                .captures(&text)
-                .map(|caps| caps.get(1).unwrap().as_str().to_string());
-
-            // Audio quality info: e.g. "24-Bit/96 kHz" or "16-Bit/44.1 kHz"
-            let re_quality =
-                regex::Regex::new(r#"class="album-quality__info"\s*>\s*([^<]+)\s*</span>"#)
-                    .unwrap();
-            let mut bits = None;
-            let mut sampling = None;
-            for caps in re_quality.captures_iter(&text) {
-                let s = caps.get(1).unwrap().as_str().trim();
-                println!("FOUND QUALITY PART: {}", s);
-                // Check if it matches e.g. "24-Bit/96 kHz" or "16-Bit/44.1 kHz"
-                let re_parse =
-                    regex::Regex::new(r#"(\d+)-Bit/(\d+(?:\.\d+)?)\s*(?:kHz|khz)"#).unwrap();
-                if let Some(c) = re_parse.captures(s) {
-                    bits = Some(c.get(1).unwrap().as_str().to_string());
-                    sampling = Some(c.get(2).unwrap().as_str().to_string());
-                    break;
-                }
-            }
-
-            println!(
-                "URL: {}\n  Release Date: {:?}\n  Bits: {:?}\n  Sampling: {:?}",
-                url, release_date, bits, sampling
+                .unwrap_or_else(|error| panic!("{} failed: {error}", region.code));
+            assert!(
+                !response.albums.is_empty(),
+                "{} returned no albums",
+                region.code
             );
         }
+    }
+
+    fn html_escape_attr(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
     }
 }

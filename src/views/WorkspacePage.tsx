@@ -13,7 +13,8 @@ import {
   File,
   FolderOpen,
   Archive,
-  Download
+  Download,
+  Loader
 } from "lucide-react";
 
 type FileTypeKey = "all" | "image" | "archive" | "audio" | "video" | "document" | "other";
@@ -666,12 +667,13 @@ export const WorkspacePage: React.FC = () => {
 
                       {/* Download Status Column */}
                       <td className="col-status" style={{ padding: "12px 16px", verticalAlign: "middle", textAlign: "right" }}>
-                        <div className="download-progress-col-wrap" style={{ display: "inline-block", textAlign: "left" }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: "inline-block", textAlign: "center" }} onClick={e => e.stopPropagation()}>
                           <DownloadProgress
                             fileId={file.fileId}
                             fileName={file.fileName}
                             sizeBytes={file.sizeBytes}
                             messageId={file.messageId}
+                            compact={true}
                           />
                         </div>
                       </td>
@@ -734,6 +736,90 @@ export const WorkspacePage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Active Downloads Floating Panel */}
+      {(() => {
+        const activeDownloads = downloads.filter(
+          (d) => d.status === "queued" || d.status === "downloading" || d.status === "paused" || d.status === "failed" || d.status === "stopped"
+        );
+        if (activeDownloads.length === 0) return null;
+        return (
+          <div
+            style={{
+              position: "fixed",
+              bottom: "24px",
+              right: "24px",
+              width: "320px",
+              backgroundColor: "#ffffff",
+              border: "1px solid var(--border-color)",
+              borderRadius: "12px",
+              boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.08)",
+              zIndex: 1000,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              fontFamily: "Inter, system-ui, sans-serif",
+            }}
+          >
+            {/* Header */}
+            <div
+              style={{
+                padding: "10px 14px",
+                backgroundColor: "rgba(241, 245, 249, 0.5)",
+                borderBottom: "1px solid var(--border-color)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <Loader size={14} className="animate-spin" style={{ color: "var(--accent-blue)" }} />
+                <span style={{ fontSize: "0.85rem", fontWeight: "600", color: "var(--text-primary)" }}>
+                  文件下载状态 ({activeDownloads.length})
+                </span>
+              </div>
+            </div>
+
+            {/* List */}
+            <div
+              style={{
+                maxHeight: "300px",
+                overflowY: "auto",
+                padding: "12px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "10px",
+              }}
+            >
+              {activeDownloads.map((d) => (
+                <div
+                  key={d.id}
+                  style={{
+                    padding: "8px 10px",
+                    backgroundColor: "var(--bg-app)",
+                    border: "1px solid var(--border-color)",
+                    borderRadius: "8px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                  }}
+                >
+                  <div style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={d.fileName}>
+                    {d.fileName || "未知文件"}
+                  </div>
+                  <DownloadProgress
+                    fileId={d.fileId}
+                    messageId={d.messageId}
+                    sizeBytes={d.sizeBytes}
+                    fileName={d.fileName}
+                    hideControls={true}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       <style>{`
         .table-row-hover:hover td {

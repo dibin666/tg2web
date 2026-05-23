@@ -3,7 +3,7 @@ import { ChatMessage, TelegramEntity } from "../api/types";
 import { EntityTextRenderer } from "./EntityTextRenderer";
 import { MediaPreview } from "./MediaPreview";
 import { InlineKeyboardPreview } from "./InlineKeyboardPreview";
-import { Check, CheckCheck, Clock, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Check, CheckCheck, Clock, AlertTriangle, ShieldCheck, Trash2 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
 interface MetadataItem {
@@ -101,9 +101,10 @@ const getChunkEntities = (entities: TelegramEntity[] | undefined, startIndex: nu
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  isNew?: boolean;
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
+export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isNew }) => {
   const { userRole, t } = useApp();
 
   const formatTime = (isoString: string) => {
@@ -115,13 +116,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
     }
   };
 
-  if (message.direction === "system" || message.status === "deleted") {
+  if (message.direction === "system") {
     return (
       <div
+        className={isNew ? "message-entry" : ""}
         style={{
           display: "flex",
           justifyContent: "center",
-          margin: "12px 0",
+          margin: "6px 0",
           width: "100%",
         }}
       >
@@ -132,12 +134,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             borderRadius: "6px",
             padding: "6px 16px",
             fontSize: "0.75rem",
-            color: message.status === "deleted" ? "var(--accent-red)" : "var(--text-secondary)",
+            color: "var(--text-secondary)",
             maxWidth: "80%",
             textAlign: "center",
           }}
         >
-          {message.status === "deleted" ? "[Message Deleted]" : message.text}
+          {message.text}
           {message.createdAt && (
             <span style={{ marginLeft: "8px", opacity: 0.6 }}>
               {formatTime(message.createdAt)}
@@ -149,13 +151,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   }
 
   const isOutgoing = message.direction === "outgoing";
+  const isDeleted = message.status === "deleted";
 
   return (
     <div
+      className={isNew ? "message-entry" : ""}
       style={{
         display: "flex",
         justifyContent: isOutgoing ? "flex-end" : "flex-start",
-        margin: "8px 0",
+        margin: "4px 0",
         width: "100%",
       }}
     >
@@ -166,6 +170,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           alignItems: isOutgoing ? "flex-end" : "flex-start",
           maxWidth: "75%",
           minWidth: "150px",
+          transition: "all 0.3s ease",
         }}
       >
         {/* Attribution / Header */}
@@ -176,8 +181,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             gap: "4px",
             fontSize: "0.7rem",
             color: "var(--text-secondary)",
-            marginBottom: "3px",
+            marginBottom: "2px",
             padding: "0 4px",
+            opacity: isDeleted ? 0.65 : 1,
+            transition: "opacity 0.3s ease",
           }}
         >
           {isOutgoing ? (
@@ -209,114 +216,142 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
 
         {/* Bubble Body */}
         <div
+          className="message-bubble-body"
           style={{
-            backgroundColor: isOutgoing ? "var(--bubble-outgoing)" : "var(--bubble-incoming)",
+            backgroundColor: isDeleted
+              ? (isOutgoing ? "rgba(59, 130, 246, 0.08)" : "rgba(148, 163, 184, 0.06)")
+              : (isOutgoing ? "var(--bubble-outgoing)" : "var(--bubble-incoming)"),
+            border: isDeleted
+              ? (isOutgoing ? "1px dashed rgba(59, 130, 246, 0.3)" : "1px dashed var(--border-color)")
+              : (isOutgoing ? "1px solid transparent" : "1px solid var(--border-color)"),
             borderRadius: isOutgoing ? "12px 12px 2px 12px" : "12px 12px 12px 2px",
-            padding: "8px 12px",
+            padding: "6px 10px",
             position: "relative",
             width: "100%",
-            boxShadow: "var(--shadow-sm)",
-            borderLeft: message.status === "failed" ? "3px solid var(--accent-red)" : undefined,
+            boxShadow: isDeleted ? "none" : "var(--shadow-sm)",
+            borderLeft: !isDeleted && message.status === "failed" ? "3px solid var(--accent-red)" : undefined,
           }}
         >
-          {/* Main Text */}
-          {message.text && (
+          {isDeleted ? (
             <div
               style={{
-                fontSize: "0.9rem",
-                lineHeight: "1.4",
-                color: message.status === "failed" ? "rgba(255,255,255,0.7)" : (isOutgoing ? "var(--bubble-outgoing-text)" : "var(--bubble-incoming-text)"),
-                wordBreak: "break-word",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                fontStyle: "italic",
+                color: "var(--text-muted)",
+                fontSize: "0.85rem",
+                padding: "2px 0",
               }}
             >
-              {(() => {
-                const chunks = parseMessageChunks(message.text);
-                const hasMetadata = chunks.some(chunk => chunk.type === "metadata");
-                
-                if (!hasMetadata) {
-                  return (
-                    <div style={{ whiteSpace: "pre-wrap" }}>
-                      <EntityTextRenderer text={message.text} entities={message.entities} />
-                    </div>
-                  );
-                }
-
-                return (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                    {chunks.map((chunk, idx) => {
-                      if (chunk.type === "text") {
-                        const chunkEntities = getChunkEntities(message.entities, chunk.startIndex, chunk.content.length);
-                        return (
-                          <div key={idx} style={{ whiteSpace: "pre-wrap" }}>
-                            <EntityTextRenderer text={chunk.content} entities={chunkEntities} />
-                          </div>
-                        );
-                      } else {
-                        return (
-                          <div
-                            key={idx}
-                            style={{
-                              backgroundColor: isOutgoing ? "rgba(255, 255, 255, 0.12)" : "rgba(15, 23, 42, 0.03)",
-                              border: isOutgoing ? "1px solid rgba(255, 255, 255, 0.18)" : "1px solid rgba(15, 23, 42, 0.06)",
-                              borderRadius: "8px",
-                              padding: "10px 12px",
-                              display: "grid",
-                              gridTemplateColumns: "auto 1fr",
-                              rowGap: "6px",
-                              columnGap: "16px",
-                              alignItems: "baseline",
-                              margin: "4px 0",
-                            }}
-                          >
-                            {chunk.items.map((item, itemIdx) => (
-                              <React.Fragment key={itemIdx}>
-                                <span
-                                  style={{
-                                    fontSize: "0.72rem",
-                                    fontWeight: 600,
-                                    color: isOutgoing ? "rgba(255, 255, 255, 0.75)" : "var(--text-secondary)",
-                                    letterSpacing: "0.05em",
-                                    textTransform: "uppercase",
-                                    whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  {item.key}
-                                </span>
-                                <span
-                                  style={{
-                                    fontSize: "0.82rem",
-                                    fontWeight: 500,
-                                    color: isOutgoing ? "#ffffff" : "var(--text-primary)",
-                                    wordBreak: "break-word",
-                                  }}
-                                >
-                                  {item.value}
-                                </span>
-                              </React.Fragment>
-                            ))}
-                          </div>
-                        );
-                      }
-                    })}
-                  </div>
-                );
-              })()}
+              <Trash2 size={12} style={{ opacity: 0.7, color: "var(--accent-red)" }} />
+              <span>{t("messageDeleted") || "[Message Deleted]"}</span>
             </div>
+          ) : (
+            <>
+              {/* Main Text */}
+              {message.text && (
+                <div
+                  style={{
+                    fontSize: "0.9rem",
+                    lineHeight: "1.4",
+                    color: message.status === "failed" ? "rgba(255,255,255,0.7)" : (isOutgoing ? "var(--bubble-outgoing-text)" : "var(--bubble-incoming-text)"),
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {(() => {
+                    const chunks = parseMessageChunks(message.text);
+                    const hasMetadata = chunks.some(chunk => chunk.type === "metadata");
+                    
+                    if (!hasMetadata) {
+                      return (
+                        <div style={{ whiteSpace: "pre-wrap" }}>
+                          <EntityTextRenderer text={message.text} entities={message.entities} />
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {chunks.map((chunk, idx) => {
+                          if (chunk.type === "text") {
+                            const chunkEntities = getChunkEntities(message.entities, chunk.startIndex, chunk.content.length);
+                            return (
+                              <div key={idx} style={{ whiteSpace: "pre-wrap" }}>
+                                <EntityTextRenderer text={chunk.content} entities={chunkEntities} />
+                              </div>
+                            );
+                          } else {
+                            return (
+                              <div
+                                key={idx}
+                                style={{
+                                  backgroundColor: isOutgoing ? "rgba(255, 255, 255, 0.12)" : "rgba(15, 23, 42, 0.03)",
+                                  border: isOutgoing ? "1px solid rgba(255, 255, 255, 0.18)" : "1px solid rgba(15, 23, 42, 0.06)",
+                                  borderRadius: "6px",
+                                  padding: "4px 8px",
+                                  display: "grid",
+                                  gridTemplateColumns: "auto 1fr",
+                                  rowGap: "2px",
+                                  columnGap: "10px",
+                                  alignItems: "baseline",
+                                  margin: "2px 0",
+                                }}
+                              >
+                                {chunk.items.map((item, itemIdx) => (
+                                  <React.Fragment key={itemIdx}>
+                                    <span
+                                      style={{
+                                        fontSize: "0.65rem",
+                                        fontWeight: 600,
+                                        color: isOutgoing ? "rgba(255, 255, 255, 0.75)" : "var(--text-secondary)",
+                                        letterSpacing: "0.05em",
+                                        textTransform: "uppercase",
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {item.key}
+                                    </span>
+                                    <span
+                                      style={{
+                                        fontSize: "0.75rem",
+                                        fontWeight: 500,
+                                        color: isOutgoing ? "#ffffff" : "var(--text-primary)",
+                                        wordBreak: "break-word",
+                                      }}
+                                    >
+                                      {item.value}
+                                    </span>
+                                  </React.Fragment>
+                                ))}
+                              </div>
+                            );
+                          }
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </>
           )}
 
-          {/* Media Attachments */}
-          {message.media && message.media.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: message.text ? "8px" : "0" }}>
-              {message.media.map((med, idx) => (
-                <MediaPreview key={idx} media={med} messageId={message.id} />
-              ))}
-            </div>
-          )}
+          {/* Collapsible Section for Media and Keyboards */}
+          <div className={`message-collapsible-section ${isDeleted ? "collapsed" : ""}`}>
+            {/* Media Attachments */}
+            {message.media && message.media.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: message.text ? "4px" : "0" }}>
+                {message.media.map((med, idx) => (
+                  <MediaPreview key={idx} media={med} messageId={message.id} />
+                ))}
+              </div>
+            )}
 
-          {/* Inline Keyboard Preview */}
-          {message.inlineKeyboard && (
-            <InlineKeyboardPreview botId={message.botId} messageId={message.id} keyboard={message.inlineKeyboard} />
-          )}
+            {/* Inline Keyboard Preview */}
+            {message.inlineKeyboard && (
+              <InlineKeyboardPreview botId={message.botId} messageId={message.id} keyboard={message.inlineKeyboard} />
+            )}
+          </div>
 
           {/* Status & Time Footer */}
           <div
@@ -327,12 +362,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
               gap: "4px",
               marginTop: "4px",
               fontSize: "0.65rem",
-              color: isOutgoing ? "rgba(255, 255, 255, 0.7)" : "var(--text-muted)",
+              color: isDeleted ? "var(--text-muted)" : (isOutgoing ? "rgba(255, 255, 255, 0.7)" : "var(--text-muted)"),
             }}
           >
-            {message.editedAt && <span>edited</span>}
+            {!isDeleted && message.editedAt && <span>edited</span>}
             <span>{formatTime(message.createdAt)}</span>
-            {isOutgoing && (
+            {!isDeleted && isOutgoing && (
               <span style={{ display: "inline-flex" }}>
                 {message.status === "pending" && <Clock size={10} className="animate-pulse-slow" />}
                 {message.status === "sent" && <Check size={10} />}

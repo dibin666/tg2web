@@ -1,13 +1,23 @@
-import React, { useRef, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import { useApp } from "../context/AppContext";
 import { MessageBubble } from "../components/MessageBubble";
 import { PendingDraftBubble } from "../components/PendingDraftBubble";
 import { MessageComposer } from "../components/MessageComposer";
 import { Bot } from "lucide-react";
+import { DownloadQueueWidget } from "../components/DownloadQueueWidget";
 
 export const ChatPage: React.FC = () => {
   const { bots, activeBotId, messages, pendingDrafts, loading } = useApp();
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Track mount / switch bot time to only animate live new messages.
+  const [mountTime, setMountTime] = useState<number>(0);
+  useEffect(() => {
+    const animId = requestAnimationFrame(() => {
+      setMountTime(Date.now());
+    });
+    return () => cancelAnimationFrame(animId);
+  }, [activeBotId]);
 
   const activeBot = bots.find((b) => b.id === activeBotId);
 
@@ -109,6 +119,7 @@ export const ChatPage: React.FC = () => {
             >
               {activeBot.status}
             </span>
+            <DownloadQueueWidget />
           </div>
           <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
             @{activeBot.username || "unknown_bot"} • Shared Telegram Chat
@@ -127,7 +138,7 @@ export const ChatPage: React.FC = () => {
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: "16px 20px",
+          padding: "10px 14px",
           display: "flex",
           flexDirection: "column",
           overflowAnchor: "none",
@@ -154,9 +165,10 @@ export const ChatPage: React.FC = () => {
         ) : (
           <>
             {/* Historical and active messages */}
-            {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
-            ))}
+            {messages.map((msg) => {
+              const isNew = mountTime > 0 && new Date(msg.createdAt).getTime() > mountTime - 1000;
+              return <MessageBubble key={msg.id} message={msg} isNew={isNew} />;
+            })}
 
             {/* Live Streaming Draft Bubble */}
             {pendingDrafts.map((draft) => (

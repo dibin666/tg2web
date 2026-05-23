@@ -52,6 +52,10 @@ impl AppConfig {
             cors_origin: CorsOrigin::Any,
         }
     }
+
+    pub fn tdlib_files_path(&self) -> PathBuf {
+        self.media_cache_path.join("tdlib-files")
+    }
 }
 
 fn path_var(name: &str, default_value: &str) -> PathBuf {
@@ -85,6 +89,10 @@ mod tests {
 
         assert!(config.database_path.starts_with(root.path()));
         assert!(config.media_cache_path.starts_with(root.path()));
+        assert_eq!(
+            config.tdlib_files_path(),
+            config.media_cache_path.join("tdlib-files")
+        );
         assert_eq!(config.cors_origin, CorsOrigin::Any);
     }
 }

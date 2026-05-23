@@ -171,6 +171,30 @@ a:hover {
   transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
+/* Chat Message Animations and Transitions */
+.message-entry {
+  animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.message-bubble-body {
+  transition: background-color 0.3s ease, border-color 0.3s ease, padding 0.3s ease, border-radius 0.3s ease, box-shadow 0.3s ease, min-width 0.3s ease;
+}
+
+.message-collapsible-section {
+  max-height: 1000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease, margin-top 0.35s ease;
+}
+
+.message-collapsible-section.collapsed {
+  max-height: 0 !important;
+  opacity: 0 !important;
+  margin-top: 0 !important;
+  pointer-events: none;
+}
+
+
 /* Layout containers */
 .app-container {
   display: flex;
@@ -300,18 +324,18 @@ a:hover {
 
 /* Media Cards styling */
 .media-preview-container {
-  margin-top: 10px;
+  margin-top: 6px;
   border-radius: 8px;
   overflow: hidden;
   background-color: #f8fafc;
   border: 1px solid var(--border-color);
-  width: 360px;
+  width: 260px;
   max-width: 100%;
 }
 
 .media-photo-preview {
-  margin-top: 10px;
-  width: 360px;
+  margin-top: 6px;
+  width: 260px;
   max-width: 100%;
 }
 
@@ -324,7 +348,7 @@ a:hover {
 
 .media-image {
   width: 100%;
-  max-height: 250px;
+  max-height: 180px;
   object-fit: contain;
   display: block;
   background-color: #eef2f7;
@@ -334,8 +358,8 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 140px;
-  padding: 16px;
+  min-height: 100px;
+  padding: 10px;
   color: var(--text-muted);
   font-size: 0.75rem;
   background-color: #f1f5f9;
@@ -345,26 +369,26 @@ a:hover {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 6px 10px;
   background-color: #ffffff;
 }
 
 .media-download-slot {
   flex: 1 0 100%;
   min-width: 0;
-  min-height: 48px;
+  min-height: 36px;
   display: flex;
   align-items: center;
   box-sizing: border-box;
 }
 
 .media-footer-download {
-  padding: 8px;
+  padding: 4px 8px;
   border-top: 1px solid var(--border-color);
   display: flex;
   justify-content: flex-end;
-  min-height: 48px;
+  min-height: 36px;
   align-items: center;
   box-sizing: border-box;
 }
@@ -891,13 +915,90 @@ a:hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 0.75rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
   border: 1px solid transparent;
+}
+
+.animate-spin {
+  animation: spin 1.5s linear infinite;
+}
+
+.icon-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: none;
+}
+.icon-action-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+.icon-action-button.start {
+  background-color: var(--accent-blue-transparent);
+  color: var(--accent-blue);
+  border-color: rgba(59, 130, 246, 0.15);
+}
+.icon-action-button.start:hover {
+  background-color: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+.icon-action-button.primary {
+  background-color: var(--accent-blue-transparent);
+  color: var(--accent-blue);
+  border-color: rgba(59, 130, 246, 0.15);
+}
+.icon-action-button.primary:hover {
+  background-color: rgba(59, 130, 246, 0.12);
+}
+.icon-action-button.success {
+  background-color: var(--accent-green-transparent);
+  color: var(--accent-green);
+  border-color: rgba(16, 185, 129, 0.15);
+}
+.icon-action-button.success:hover {
+  background-color: rgba(16, 185, 129, 0.12);
+}
+.icon-action-button.danger {
+  background-color: var(--accent-red-transparent);
+  color: var(--accent-red);
+  border-color: rgba(244, 63, 94, 0.15);
+}
+.icon-action-button.danger:hover {
+  background-color: rgba(244, 63, 94, 0.12);
+}
+.icon-action-button.expired {
+  background-color: rgba(148, 163, 184, 0.1);
+  color: var(--text-secondary);
+  border-color: rgba(148, 163, 184, 0.15);
+}
+.icon-action-button.expired:hover {
+  background-color: rgba(148, 163, 184, 0.15);
+}
+
+.icon-status-display {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+.icon-status-display.primary {
+  background-color: var(--accent-blue-transparent);
+  color: var(--accent-blue);
+  border-color: rgba(59, 130, 246, 0.15);
 }
 .btn-download-action:disabled {
   opacity: 0.78;
