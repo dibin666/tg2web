@@ -102,9 +102,14 @@ const isDiscoveredBot = (chat: DiscoveredTelegramChat) => chat.isBot || chat.kin
 
 const upsertDiscoveredChat = (chats: DiscoveredTelegramChat[], incoming: DiscoveredTelegramChat) => {
   if (!isDiscoveredBot(incoming)) return chats;
+  const incomingUsername = normalizeBotSearchQuery(incoming.username || "");
   const next = [
     incoming,
-    ...chats.filter((chat) => chat.telegramChatId !== incoming.telegramChatId),
+    ...chats.filter((chat) => {
+      if (chat.telegramChatId === incoming.telegramChatId) return false;
+      if (!incomingUsername) return true;
+      return normalizeBotSearchQuery(chat.username || "") !== incomingUsername;
+    }),
   ].filter(isDiscoveredBot);
   return next.sort((left, right) =>
     Number(right.isBot) - Number(left.isBot)
@@ -114,6 +119,14 @@ const upsertDiscoveredChat = (chats: DiscoveredTelegramChat[], incoming: Discove
 
 const isDiscoveryPendingError = (error: unknown) =>
   error instanceof Error && error.message.includes("username search was submitted");
+
+const publishedBotForDiscoveredChat = (bots: PublishedBot[], chat: DiscoveredTelegramChat) => {
+  const username = normalizeBotSearchQuery(chat.username || "");
+  return bots.find((bot) => bot.telegramChatId === chat.telegramChatId)
+    || (username
+      ? bots.find((bot) => normalizeBotSearchQuery(bot.username || "") === username)
+      : undefined);
+};
 
 const ARCHIVE_TEMPLATE_SAMPLE: Record<string, string> = {
   artist: "Artist",
@@ -392,6 +405,10 @@ export const SettingsPage: React.FC = () => {
       }
 
       await refreshBotState();
+      if (discoveryPending) {
+        await new Promise((resolve) => window.setTimeout(resolve, 900));
+        await refreshBotState();
+      }
       setNotice(discoveryPending ? "已提交 Telegram 搜索请求，发现结果会刷新到下方列表。" : "搜索完成。");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
@@ -758,40 +775,55 @@ export const SettingsPage: React.FC = () => {
                     {botSearchQuery ? "没有匹配的已发布机器人。" : "没有已发布机器人。"}
                   </span>
                 ) : (
-                  pagedPublishedBots.map((bot) => (
-                    <div className="settings-list-row" key={bot.id}>
-                      <div>
-                        <strong>{bot.displayTitle || bot.title}</strong>
-                        <span>{bot.username ? `@${bot.username}` : bot.telegramChatId}</span>
+                  pagedPublishedBots.map((bot) => {
+                    const keepVisibleInSearch = Boolean(botSearchQuery && bot.enabled);
+                    return (
+                      <div className="settings-list-row" key={bot.id}>
+                        <div>
+                          <strong>{bot.displayTitle || bot.title}</strong>
+                          <span>{bot.username ? `@${bot.username}` : bot.telegramChatId}</span>
+                        </div>
+                        <button
+                          className="icon-button"
+                          disabled={busy || keepVisibleInSearch}
+                          onClick={() => runAdminAction(() => adminApiClient.patchPublishedBot(bot.id, { enabled: !bot.enabled }), "Bot visibility updated.")}
+                          title={keepVisibleInSearch ? "已发布" : bot.enabled ? "Disable" : "Enable"}
+                        >
+                          {bot.enabled ? <Check size={14} /> : <ToggleLeft size={16} />}
+                        </button>
                       </div>
-                      <button
-                        className="icon-button"
-                        onClick={() => runAdminAction(() => adminApiClient.patchPublishedBot(bot.id, { enabled: !bot.enabled }), "Bot visibility updated.")}
-                        title={bot.enabled ? "Disable" : "Enable"}
-                      >
-                        {bot.enabled ? <Check size={14} /> : <ToggleLeft size={16} />}
-                      </button>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
               {renderPagination(currentPublishedPage, publishedPageCount, setPublishedPage, filteredPublishedBots.length)}
               {filteredDiscoveredChats.length > 0 ? (
                 <div className="settings-list" style={{ marginTop: "12px" }}>
-                  {pagedDiscoveredChats.map((chat) => (
-                    <div className="settings-list-row" key={chat.telegramChatId}>
-                      <div>
-                        <strong>{chat.title}</strong>
-                        <span>{chat.username ? `@${chat.username}` : chat.telegramChatId}</span>
+                  {pagedDiscoveredChats.map((chat) => {
+                    const published = publishedBotForDiscoveredChat(publishedBots, chat);
+                    const sameChatPublished = published?.telegramChatId === chat.telegramChatId;
+                    const isRebinding = Boolean(published && !sameChatPublished);
+                    return (
+                      <div className="settings-list-row" key={chat.telegramChatId}>
+                        <div>
+                          <strong>{chat.title}</strong>
+                          <span>{chat.username ? `@${chat.username}` : chat.telegramChatId}</span>
+                        </div>
+                        <button
+                          className="btn-secondary"
+                          disabled={busy || sameChatPublished}
+                          onClick={() =>
+                            runAdminAction(
+                              () => adminApiClient.publishBot({ telegramChatId: chat.telegramChatId }),
+                              isRebinding ? "Bot binding refreshed." : "Bot published.",
+                            )
+                          }
+                        >
+                          {sameChatPublished ? "已发布" : isRebinding ? "重新绑定" : "Publish"}
+                        </button>
                       </div>
-                      <button
-                        className="btn-secondary"
-                        onClick={() => runAdminAction(() => adminApiClient.publishBot({ telegramChatId: chat.telegramChatId }), "Bot published.")}
-                      >
-                        Publish
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {renderPagination(currentDiscoveredPage, discoveredPageCount, setDiscoveredPage, filteredDiscoveredChats.length)}
                 </div>
               ) : (

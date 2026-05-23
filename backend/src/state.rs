@@ -2463,12 +2463,29 @@ impl AppState {
 
     async fn upsert_discovered_chat(&self, mut chat: DiscoveredTelegramChat) -> AppResult<()> {
         let now = now_rfc3339();
+        let normalized_username = chat
+            .username
+            .as_deref()
+            .and_then(normalize_telegram_username);
         {
             let runtime = self.runtime.read().await;
             chat.already_published = runtime
                 .published_bots
                 .iter()
                 .any(|bot| bot.telegram_chat_id == chat.telegram_chat_id);
+        }
+
+        if chat.is_bot {
+            if let Some(username) = normalized_username.as_deref() {
+                sqlx::query(
+                    "DELETE FROM discovered_telegram_chats \
+                     WHERE LOWER(username) = ? AND telegram_chat_id != ? AND is_bot = 1",
+                )
+                .bind(username)
+                .bind(&chat.telegram_chat_id)
+                .execute(&self.db)
+                .await?;
+            }
         }
 
         sqlx::query(
@@ -2495,6 +2512,16 @@ impl AppState {
         .await?;
 
         let mut runtime = self.runtime.write().await;
+        if chat.is_bot {
+            if let Some(username) = normalized_username.as_deref() {
+                runtime.discovered_chats.retain(|existing| {
+                    existing.telegram_chat_id == chat.telegram_chat_id
+                        || !existing.is_bot
+                        || !telegram_usernames_equal(existing.username.as_deref(), Some(username))
+                });
+            }
+        }
+
         chat.already_published = runtime
             .published_bots
             .iter()
@@ -2523,6 +2550,7 @@ impl AppState {
             runtime.discovered_chats.push(chat);
         }
 
+        refresh_discovered_publish_flags(&mut runtime);
         runtime.discovered_chats.sort_by(|left, right| {
             right
                 .is_bot
@@ -3662,43 +3690,47 @@ impl AppState {
         &self,
         username: &str,
     ) -> AppResult<DiscoveredTelegramChat> {
-        let username = username.trim().trim_start_matches('@').to_lowercase();
-        if username.is_empty() {
+        let Some(username) = normalize_telegram_username(username) else {
             return Err(AppError::bad_request(
                 "missing_username",
                 "username is required",
             ));
-        }
+        };
 
-        if let Some(chat) = self
+        let cached = self
             .runtime
             .read()
             .await
             .discovered_chats
             .iter()
-            .find(|chat| {
-                chat.username
-                    .as_deref()
-                    .is_some_and(|value| value.eq_ignore_ascii_case(&username))
-            })
-            .cloned()
-        {
-            return Ok(chat);
-        }
+            .find(|chat| telegram_usernames_equal(chat.username.as_deref(), Some(&username)))
+            .cloned();
 
-        let credentials = self.telegram_credentials().await.map_err(|error| {
-            AppError::telegram_unavailable(format!(
-                "username search requires the TDLib runtime: {error}"
-            ))
-        })?;
-        self.telegram_bridge.send_request(
+        let credentials = match self.telegram_credentials().await {
+            Ok(credentials) => credentials,
+            Err(error) => {
+                if let Some(chat) = cached {
+                    return Ok(chat);
+                }
+                return Err(AppError::telegram_unavailable(format!(
+                    "username search requires the TDLib runtime: {error}"
+                )));
+            }
+        };
+
+        if let Err(error) = self.telegram_bridge.send_request(
             credentials,
             json!({
                 "@type": "searchPublicChat",
                 "@extra": format!("search:{}", username),
                 "username": username,
             }),
-        )?;
+        ) {
+            if let Some(chat) = cached {
+                return Ok(chat);
+            }
+            return Err(error);
+        }
 
         Err(AppError::conflict(
             "telegram_chat_discovery_pending",
@@ -3743,6 +3775,7 @@ impl AppState {
         sort_order: Option<i32>,
         history_sync_policy: Option<HistorySyncPolicy>,
     ) -> AppResult<PublishedBot> {
+        let telegram_chat_id = telegram_chat_id.trim();
         let mut runtime = self.runtime.write().await;
         let Some(chat) = runtime
             .discovered_chats
@@ -3756,15 +3789,69 @@ impl AppState {
             ));
         };
 
-        if runtime
+        let existing_index = runtime
             .published_bots
             .iter()
-            .any(|bot| bot.telegram_chat_id == telegram_chat_id)
-        {
-            return Err(AppError::conflict(
-                "bot_already_published",
-                "this Telegram bot chat is already published",
-            ));
+            .position(|bot| bot.telegram_chat_id == telegram_chat_id)
+            .or_else(|| {
+                chat.username.as_deref().and_then(|username| {
+                    runtime.published_bots.iter().position(|bot| {
+                        telegram_usernames_equal(bot.username.as_deref(), Some(username))
+                    })
+                })
+            });
+
+        if let Some(index) = existing_index {
+            let bot = &mut runtime.published_bots[index];
+            bot.telegram_chat_id = chat.telegram_chat_id.clone();
+            bot.username = chat.username.clone().or_else(|| bot.username.clone());
+            bot.title = chat.title.clone();
+            if display_title.is_some() {
+                bot.display_title = display_title;
+            }
+            bot.enabled = enabled.unwrap_or(true);
+            if let Some(is_pinned) = is_pinned {
+                bot.is_pinned = is_pinned;
+            }
+            if let Some(sort_order) = sort_order {
+                bot.sort_order = sort_order;
+            }
+            if let Some(history_sync_policy) = history_sync_policy {
+                bot.history_sync_policy = history_sync_policy;
+            }
+            bot.status = chat.status;
+
+            let updated = bot.clone();
+            sqlx::query(
+                "UPDATE published_bots SET \
+                 telegram_chat_id = ?, username = ?, title = ?, display_title = ?, enabled = ?, \
+                 is_pinned = ?, sort_order = ?, history_sync_policy = ?, status = ?, updated_at = ? \
+                 WHERE id = ?",
+            )
+            .bind(&updated.telegram_chat_id)
+            .bind(&updated.username)
+            .bind(&updated.title)
+            .bind(&updated.display_title)
+            .bind(updated.enabled)
+            .bind(updated.is_pinned)
+            .bind(updated.sort_order)
+            .bind(history_sync_policy_to_db(&updated.history_sync_policy))
+            .bind(bot_status_to_db(&updated.status))
+            .bind(now_rfc3339())
+            .bind(&updated.id)
+            .execute(&self.db)
+            .await?;
+
+            refresh_discovered_publish_flags(&mut runtime);
+            drop(runtime);
+
+            self.emit(AppEvent::BotUpdated {
+                event_id: new_event_id(),
+                occurred_at: now_rfc3339(),
+                bot: updated.summary(),
+            });
+            self.spawn_download_queue_pump();
+            return Ok(updated);
         }
 
         let bot = PublishedBot {
@@ -3801,12 +3888,8 @@ impl AppState {
         .execute(&self.db)
         .await?;
 
-        for discovered in &mut runtime.discovered_chats {
-            if discovered.telegram_chat_id == bot.telegram_chat_id {
-                discovered.already_published = true;
-            }
-        }
         runtime.published_bots.push(bot.clone());
+        refresh_discovered_publish_flags(&mut runtime);
         drop(runtime);
 
         self.emit(AppEvent::BotPublished {
@@ -3883,7 +3966,7 @@ impl AppState {
 
     pub async fn unpublish_bot(&self, bot_id: &str) -> AppResult<()> {
         let mut runtime = self.runtime.write().await;
-        let Some(removed) = runtime
+        let Some(_removed) = runtime
             .published_bots
             .iter()
             .find(|bot| bot.id == bot_id)
@@ -3896,12 +3979,7 @@ impl AppState {
         };
 
         runtime.published_bots.retain(|bot| bot.id != bot_id);
-
-        for discovered in &mut runtime.discovered_chats {
-            if discovered.telegram_chat_id == removed.telegram_chat_id {
-                discovered.already_published = false;
-            }
-        }
+        refresh_discovered_publish_flags(&mut runtime);
 
         sqlx::query("DELETE FROM published_bots WHERE id = ?")
             .bind(bot_id)
@@ -5636,6 +5714,32 @@ fn percent_encode_path_segment(value: &str) -> String {
 
 fn tdjson_value_type(value: &Value) -> Option<&str> {
     value.get("@type").and_then(Value::as_str)
+}
+
+fn normalize_telegram_username(value: &str) -> Option<String> {
+    let normalized = value.trim().trim_start_matches('@').to_ascii_lowercase();
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn telegram_usernames_equal(left: Option<&str>, right: Option<&str>) -> bool {
+    match (
+        left.and_then(normalize_telegram_username),
+        right.and_then(normalize_telegram_username),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn refresh_discovered_publish_flags(runtime: &mut RuntimeState) {
+    let published_chat_ids = runtime
+        .published_bots
+        .iter()
+        .map(|bot| bot.telegram_chat_id.clone())
+        .collect::<HashSet<_>>();
+    for discovered in &mut runtime.discovered_chats {
+        discovered.already_published = published_chat_ids.contains(&discovered.telegram_chat_id);
+    }
 }
 
 fn discovered_chat_from_tdjson_chat_update(update: &Value) -> Option<DiscoveredTelegramChat> {
@@ -7384,6 +7488,78 @@ mod tests {
             .await
             .expect("unpublish");
         assert!(restored.list_bots().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn publish_bot_rebinds_existing_username_after_chat_id_refresh() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(AppConfig::for_test(dir.path()))
+            .await
+            .expect("state");
+
+        state
+            .apply_tdjson_update(json!({
+                "@type": "updateUser",
+                "user": {
+                    "@type": "user",
+                    "id": 1001,
+                    "first_name": "MonomarsX",
+                    "usernames": { "active_usernames": ["monomarsxbot"] },
+                    "type": { "@type": "userTypeBot" }
+                }
+            }))
+            .await
+            .expect("discover old bot");
+
+        let original = state
+            .publish_bot(
+                "1001",
+                Some("Downloader".to_string()),
+                Some(false),
+                Some(true),
+                Some(7),
+                Some(HistorySyncPolicy::LastN),
+            )
+            .await
+            .expect("publish old bot");
+
+        state
+            .apply_tdjson_update(json!({
+                "@type": "updateUser",
+                "user": {
+                    "@type": "user",
+                    "id": 2002,
+                    "first_name": "MonomarsX",
+                    "usernames": { "active_usernames": ["monomarsxbot"] },
+                    "type": { "@type": "userTypeBot" }
+                }
+            }))
+            .await
+            .expect("discover refreshed bot");
+
+        let rebound = state
+            .publish_bot("2002", None, None, None, None, None)
+            .await
+            .expect("rebind existing bot");
+
+        assert_eq!(rebound.id, original.id);
+        assert_eq!(rebound.telegram_chat_id, "2002");
+        assert_eq!(rebound.username.as_deref(), Some("monomarsxbot"));
+        assert_eq!(rebound.display_title.as_deref(), Some("Downloader"));
+        assert!(rebound.enabled);
+        assert!(rebound.is_pinned);
+        assert_eq!(rebound.sort_order, 7);
+        assert_eq!(rebound.history_sync_policy, HistorySyncPolicy::LastN);
+
+        let published = state.list_published_bots().await;
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].id, original.id);
+        assert_eq!(published[0].telegram_chat_id, "2002");
+
+        let discovered = state.list_discovered_chats(None).await;
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].telegram_chat_id, "2002");
+        assert!(discovered[0].already_published);
     }
 
     #[tokio::test]
