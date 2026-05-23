@@ -11,6 +11,7 @@ export const EventLogPanel: React.FC = () => {
     if (type.startsWith("message.")) return { bg: "var(--accent-green-transparent)", text: "var(--accent-green)" };
     if (type.startsWith("draft.")) return { bg: "var(--accent-blue-transparent)", text: "var(--accent-blue-hover)" };
     if (type.startsWith("download.")) return { bg: "rgba(147, 51, 234, 0.15)", text: "#7c3aed" };
+    if (type.startsWith("download_queue.")) return { bg: "rgba(147, 51, 234, 0.15)", text: "#7c3aed" };
     if (type.startsWith("bot.")) return { bg: "rgba(14, 165, 233, 0.12)", text: "#0369a1" };
     if (type === "file.new") return { bg: "rgba(236, 72, 153, 0.15)", text: "#be185d" };
     if (type.includes("failed") || type.includes("error")) return { bg: "var(--accent-red-transparent)", text: "var(--accent-red)" };
@@ -53,6 +54,10 @@ export const EventLogPanel: React.FC = () => {
         return `Download ready [${ev.download.id}]: ${ev.download.proxyUrl || ev.download.fileId}`;
       case "download.failed":
         return `Download failed [${ev.download.id}]: ${ev.download.error || "connection failure"}`;
+      case "download_queue.item_updated":
+        return `Queue item ${ev.item.status}: ${ev.item.title}`;
+      case "download_queue.cleared":
+        return "Download queue cleared";
       case "file.new":
         return `New workspace file [${ev.file.id}]: "${ev.file.fileName}" (${ev.file.mimeType}) sender=${ev.file.senderName}`;
       case "telegram.error":

@@ -435,6 +435,12 @@ const mergeDownload = (downloads: DownloadItem[], incoming: DownloadItem) => {
   return [incoming, ...downloads.filter((download) => !sameScope(download))];
 };
 
+const sortQueueItems = (items: QueueItem[]) =>
+  [...items].sort((left, right) => left.addedAt.localeCompare(right.addedAt) || left.id.localeCompare(right.id));
+
+const upsertQueueItem = (items: QueueItem[], incoming: QueueItem) =>
+  sortQueueItems([incoming, ...items.filter((item) => item.id !== incoming.id)]);
+
 const clientRequestId = () =>
   `req_${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
 
@@ -506,105 +512,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [activeBotId]);
 
   const [downloadQueue, setDownloadQueue] = useState<QueueItem[]>([]);
-  const botsRef = useRef<BotSummary[]>([]);
-  useEffect(() => {
-    botsRef.current = bots;
-  }, [bots]);
 
   const addToDownloadQueue = useCallback((album: QobuzAlbumSearchItem) => {
-    const newItem: QueueItem = {
-      id: `q_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    void apiClient.enqueueDownloadQueueItem({
       albumId: album.id,
       title: album.title,
-      artist: album.artist || "Unknown Artist",
+      artist: album.artist,
       coverUrl: album.coverUrl,
       albumUrl: album.albumUrl,
-      status: "queued",
-      addedAt: new Date().toISOString(),
-      logs: [],
-    };
-    setDownloadQueue((prev) => [...prev, newItem]);
+    }).then((item) => {
+      setDownloadQueue((prev) => upsertQueueItem(prev, item));
+    }).catch((error) => {
+      console.error("Failed to add album to download queue", error);
+    });
   }, []);
 
   const skipDownloadQueueItem = useCallback((id: string) => {
-    setDownloadQueue((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, status: "failed" as const, logs: [...item.logs, "Skipped by user"] } : item
-      )
-    );
+    void apiClient.skipDownloadQueueItem(id).then((item) => {
+      setDownloadQueue((prev) => upsertQueueItem(prev, item));
+    }).catch((error) => {
+      console.error("Failed to skip download queue item", error);
+    });
   }, []);
 
   const markDownloadQueueItemComplete = useCallback((id: string) => {
-    setDownloadQueue((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, status: "completed" as const, logs: [...item.logs, "Completed by user"] } : item
-      )
-    );
+    void apiClient.completeDownloadQueueItem(id).then((item) => {
+      setDownloadQueue((prev) => upsertQueueItem(prev, item));
+    }).catch((error) => {
+      console.error("Failed to complete download queue item", error);
+    });
   }, []);
 
   const clearDownloadQueue = useCallback(() => {
-    setDownloadQueue([]);
+    void apiClient.clearDownloadQueue().then(() => {
+      setDownloadQueue([]);
+    }).catch((error) => {
+      console.error("Failed to clear download queue", error);
+    });
   }, []);
-
-  // Download Queue Runner Effect
-  useEffect(() => {
-    if (connectionStatus === "offline" || bots.length === 0) return;
-
-    const targetBot = bots.find(
-      (b) =>
-        b.username?.toLowerCase() === "monomarsxbot" ||
-        b.username?.toLowerCase() === "monomarsx" ||
-        b.title.toLowerCase().includes("monomarsx")
-    ) || bots[0];
-
-    if (!targetBot) return;
-
-    const activeItem = downloadQueue.find((item) => item.status === "downloading");
-    if (activeItem) return;
-
-    const nextItem = downloadQueue.find((item) => item.status === "queued");
-    if (!nextItem) return;
-
-    setDownloadQueue((prev) =>
-      prev.map((item) =>
-        item.id === nextItem.id
-          ? { ...item, status: "downloading" as const, logs: ["Initiating download request..."] }
-          : item
-      )
-    );
-
-    const sendCmd = async () => {
-      try {
-        const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        await apiClient.sendMessage(targetBot.id, {
-          clientRequestId: requestId,
-          text: `/dl ${nextItem.albumUrl}`,
-        });
-        setDownloadQueue((prev) =>
-          prev.map((item) =>
-            item.id === nextItem.id
-              ? { ...item, logs: [...item.logs, `Sent command: /dl ${nextItem.albumUrl}`] }
-              : item
-          )
-        );
-      } catch (err) {
-        console.error("Failed to send download command", err);
-        setDownloadQueue((prev) =>
-          prev.map((item) =>
-            item.id === nextItem.id
-              ? {
-                  ...item,
-                  status: "failed" as const,
-                  logs: [...item.logs, `Failed to send command: ${err instanceof Error ? err.message : String(err)}`],
-                }
-              : item
-          )
-        );
-      }
-    };
-
-    void sendCmd();
-  }, [downloadQueue, bots, connectionStatus]);
 
   const loadBackendData = useCallback(async () => {
     const botsList = await apiClient.getBots();
@@ -618,6 +563,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const dls = await apiClient.getDownloads();
     setDownloads(dls);
+
+    const queue = await apiClient.getDownloadQueue();
+    setDownloadQueue(sortQueueItems(queue));
 
     const sets = await apiClient.getSettings();
     setSettings(sets);
@@ -659,6 +607,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setEventLog([]);
     setSettings(null);
     setWorkspaceFiles([]);
+    setDownloadQueue([]);
     setConnectionStatus("offline");
   }, []);
 
@@ -773,64 +722,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             );
           }
 
-          // Handle Download Queue progression on incoming messages from the target bot
-          if (event.message.direction === "incoming") {
-            const targetBot = botsRef.current.find(
-              (b) =>
-                b.username?.toLowerCase() === "monomarsxbot" ||
-                b.username?.toLowerCase() === "monomarsx" ||
-                b.title.toLowerCase().includes("monomarsx")
-            ) || botsRef.current[0];
-
-            if (targetBot && event.message.botId === targetBot.id) {
-              const text = event.message.text || "";
-              const hasMedia = event.message.media && event.message.media.length > 0;
-              const hasAudioOrDoc = event.message.media?.some(
-                (m) => m.kind === "audio" || m.kind === "document"
-              );
-
-              setDownloadQueue((prev) => {
-                const active = prev.find((item) => item.status === "downloading");
-                if (!active) return prev;
-
-                const newLogs = [...active.logs];
-                if (text) {
-                  newLogs.push(text);
-                } else if (hasMedia) {
-                  newLogs.push("[Media/Attachment received]");
-                }
-
-                // Check for completion signals
-                const isSuccess =
-                  text.includes("完成") ||
-                  text.toLowerCase().includes("success") ||
-                  text.toLowerCase().includes("done") ||
-                  text.includes("成功") ||
-                  text.includes("下载完成") ||
-                  hasAudioOrDoc;
-
-                const isFailure =
-                  text.includes("失败") ||
-                  text.toLowerCase().includes("error") ||
-                  text.toLowerCase().includes("failed") ||
-                  text.includes("不支持") ||
-                  text.includes("错误");
-
-                let newStatus = active.status;
-                if (isSuccess) {
-                  newStatus = "completed";
-                  newLogs.push("Download completed successfully.");
-                } else if (isFailure) {
-                  newStatus = "failed";
-                  newLogs.push("Download failed.");
-                }
-
-                return prev.map((item) =>
-                  item.id === active.id ? { ...item, status: newStatus, logs: newLogs } : item
-                );
-              });
-            }
-          }
           break;
 
         case "message.edited":
@@ -927,6 +818,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (download.fileId !== event.fileId) return true;
             return Boolean(event.messageId) && (download.messageId || "") !== event.messageId;
           }));
+          break;
+
+        case "download_queue.item_updated":
+          setDownloadQueue((prev) => upsertQueueItem(prev, event.item));
+          break;
+
+        case "download_queue.cleared":
+          setDownloadQueue([]);
           break;
 
         case "file.new":

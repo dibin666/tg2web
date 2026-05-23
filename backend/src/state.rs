@@ -3,10 +3,11 @@ use crate::{
     config::AppConfig,
     error::{AppError, AppResult},
     models::{
-        new_event_id, new_id, now_rfc3339, AccessKey, AppEvent, AuthSession, BotCommand, BotStatus,
-        BotSummary, ChatMessage, ClearDownloadCacheResponse, ConnectionStatus,
-        CreateAccessKeyRequest, DiscoveredTelegramChat, DownloadCacheItem, DownloadCacheSummary,
-        DownloadItem, DownloadStatus, HistorySyncPolicy, InlineKeyboardClickRequest,
+        new_event_id, new_id, now_rfc3339, AccessKey, AppEvent, AuthRole, AuthSession, AuthUser,
+        BotCommand, BotStatus, BotSummary, ChatMessage, ClearDownloadCacheResponse,
+        ConnectionStatus, CreateAccessKeyRequest, DiscoveredTelegramChat, DownloadCacheItem,
+        DownloadCacheSummary, DownloadItem, DownloadQueueItem, DownloadQueueStatus, DownloadStatus,
+        EnqueueDownloadQueueRequest, HistorySyncPolicy, InlineKeyboardClickRequest,
         InlineKeyboardClickResponse, InlineKeyboardMarkup, InternalUser, MeResponse,
         MessageDirection, MessageMedia, MessageStatus, PendingDraft, PublishedBot,
         QobuzAlbumSearchResponse, QobuzStoreRegion, SendMessageRequest, Settings, SettingsPatch,
@@ -21,7 +22,7 @@ use crate::{
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqlitePool};
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet, VecDeque},
@@ -34,6 +35,11 @@ use tokio::sync::{broadcast, RwLock};
 const TELEGRAM_API_HASH_SECRET: &str = "telegram_api_hash";
 const EVENT_REPLAY_LIMIT: usize = 500;
 const DEFAULT_PENDING_DRAFT_TTL_SECONDS: i64 = 30;
+const DOWNLOAD_QUEUE_SELECT: &str = "SELECT id, album_id, title, artist, cover_url, album_url, \
+     status, target_bot_id, client_request_id, logs_json, enqueued_by_user_id, \
+     enqueued_by_display_name, enqueued_by_role, enqueued_by_access_key_id, \
+     enqueued_by_access_key_name, added_at, started_at, completed_at, updated_at \
+     FROM qobuz_download_queue";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -64,6 +70,8 @@ struct RuntimeState {
     downloads: Vec<DownloadItem>,
     workspace_files: Vec<WorkspaceFile>,
     pending_drafts: Vec<PendingDraft>,
+    download_queue_pump_running: bool,
+    download_queue_pump_requested: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +109,16 @@ struct TdjsonDownloadFileCandidate {
     file_id: String,
     role: TdjsonDownloadFileRole,
     file: Value,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadQueueRecord {
+    item: DownloadQueueItem,
+    enqueued_by_user_id: String,
+    enqueued_by_display_name: String,
+    enqueued_by_role: AuthRole,
+    enqueued_by_access_key_id: Option<String>,
+    enqueued_by_access_key_name: Option<String>,
 }
 
 impl Default for TelegramRuntime {
@@ -391,6 +409,7 @@ impl AppState {
         state.backfill_workspace_files_from_messages().await?;
         state.spawn_telegram_update_pump();
         state.spawn_download_recovery();
+        state.spawn_download_queue_pump();
         state.spawn_cache_cleanup_scheduler();
         Ok(state)
     }
@@ -410,6 +429,366 @@ impl AppState {
         page: Option<u32>,
     ) -> AppResult<QobuzAlbumSearchResponse> {
         self.qobuz_shop.search_albums(region, query, page).await
+    }
+
+    pub async fn list_download_queue(&self) -> AppResult<Vec<DownloadQueueItem>> {
+        let rows = sqlx::query(&format!(
+            "{DOWNLOAD_QUEUE_SELECT} ORDER BY added_at ASC, id ASC"
+        ))
+        .fetch_all(&self.db)
+        .await?;
+
+        rows.into_iter()
+            .map(download_queue_record_from_row)
+            .map(|record| record.map(|record| record.item))
+            .collect()
+    }
+
+    pub async fn enqueue_download_queue_item(
+        &self,
+        session: &AuthSession,
+        request: EnqueueDownloadQueueRequest,
+    ) -> AppResult<DownloadQueueItem> {
+        let album_id = request.album_id.trim();
+        let title = request.title.trim();
+        let album_url = request.album_url.trim();
+        if album_id.is_empty() {
+            return Err(AppError::bad_request(
+                "missing_album_id",
+                "albumId is required",
+            ));
+        }
+        if title.is_empty() {
+            return Err(AppError::bad_request("missing_title", "title is required"));
+        }
+        if album_url.is_empty() {
+            return Err(AppError::bad_request(
+                "missing_album_url",
+                "albumUrl is required",
+            ));
+        }
+
+        let now = now_rfc3339();
+        let item = DownloadQueueItem {
+            id: new_id("q"),
+            album_id: album_id.to_string(),
+            title: title.to_string(),
+            artist: request
+                .artist
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Unknown Artist")
+                .to_string(),
+            cover_url: request
+                .cover_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            album_url: album_url.to_string(),
+            status: DownloadQueueStatus::Queued,
+            target_bot_id: None,
+            client_request_id: None,
+            added_at: now.clone(),
+            started_at: None,
+            completed_at: None,
+            updated_at: now.clone(),
+            logs: Vec::new(),
+        };
+        let logs_json = serde_json::to_string(&item.logs)?;
+
+        sqlx::query(
+            "INSERT INTO qobuz_download_queue \
+             (id, album_id, title, artist, cover_url, album_url, status, target_bot_id, \
+              client_request_id, logs_json, enqueued_by_user_id, enqueued_by_display_name, \
+              enqueued_by_role, enqueued_by_access_key_id, enqueued_by_access_key_name, \
+              added_at, started_at, completed_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&item.id)
+        .bind(&item.album_id)
+        .bind(&item.title)
+        .bind(&item.artist)
+        .bind(&item.cover_url)
+        .bind(&item.album_url)
+        .bind(download_queue_status_to_db(&item.status))
+        .bind(&item.target_bot_id)
+        .bind(&item.client_request_id)
+        .bind(logs_json)
+        .bind(&session.user.id)
+        .bind(&session.user.display_name)
+        .bind(auth_role_to_db(&session.user.role))
+        .bind(&session.user.access_key_id)
+        .bind(&session.user.access_key_name)
+        .bind(&item.added_at)
+        .bind(&item.started_at)
+        .bind(&item.completed_at)
+        .bind(&item.updated_at)
+        .execute(&self.db)
+        .await?;
+
+        self.emit_download_queue_item_updated(item.clone());
+        self.spawn_download_queue_pump();
+        Ok(item)
+    }
+
+    pub async fn skip_download_queue_item(&self, item_id: &str) -> AppResult<DownloadQueueItem> {
+        let item = self
+            .mutate_download_queue_item(item_id, |item| {
+                if !download_queue_status_is_terminal(&item.status) {
+                    item.status = DownloadQueueStatus::Failed;
+                    item.completed_at = Some(now_rfc3339());
+                    push_download_queue_log(&mut item.logs, "Skipped by user".to_string());
+                }
+            })
+            .await?;
+        self.spawn_download_queue_pump();
+        Ok(item)
+    }
+
+    pub async fn complete_download_queue_item(
+        &self,
+        item_id: &str,
+    ) -> AppResult<DownloadQueueItem> {
+        let item = self
+            .mutate_download_queue_item(item_id, |item| {
+                if !download_queue_status_is_terminal(&item.status) {
+                    item.status = DownloadQueueStatus::Completed;
+                    item.completed_at = Some(now_rfc3339());
+                    push_download_queue_log(&mut item.logs, "Completed by user".to_string());
+                }
+            })
+            .await?;
+        self.spawn_download_queue_pump();
+        Ok(item)
+    }
+
+    pub async fn clear_download_queue(&self) -> AppResult<()> {
+        sqlx::query("DELETE FROM qobuz_download_queue")
+            .execute(&self.db)
+            .await?;
+        self.emit(AppEvent::DownloadQueueCleared {
+            event_id: new_event_id(),
+            occurred_at: now_rfc3339(),
+        });
+        Ok(())
+    }
+
+    async fn download_queue_record(&self, item_id: &str) -> AppResult<DownloadQueueRecord> {
+        sqlx::query(&format!("{DOWNLOAD_QUEUE_SELECT} WHERE id = ? LIMIT 1"))
+            .bind(item_id)
+            .fetch_optional(&self.db)
+            .await?
+            .map(download_queue_record_from_row)
+            .transpose()?
+            .ok_or_else(|| {
+                AppError::not_found("download_queue_item_not_found", "queue item was not found")
+            })
+    }
+
+    async fn active_download_queue_record(&self) -> AppResult<Option<DownloadQueueRecord>> {
+        sqlx::query(&format!(
+            "{DOWNLOAD_QUEUE_SELECT} WHERE status = 'downloading' ORDER BY started_at ASC, id ASC LIMIT 1"
+        ))
+        .fetch_optional(&self.db)
+        .await?
+        .map(download_queue_record_from_row)
+        .transpose()
+    }
+
+    async fn active_download_queue_record_for_bot(
+        &self,
+        bot_id: &str,
+    ) -> AppResult<Option<DownloadQueueRecord>> {
+        sqlx::query(&format!(
+            "{DOWNLOAD_QUEUE_SELECT} \
+             WHERE status = 'downloading' AND target_bot_id = ? \
+             ORDER BY started_at ASC, id ASC LIMIT 1"
+        ))
+        .bind(bot_id)
+        .fetch_optional(&self.db)
+        .await?
+        .map(download_queue_record_from_row)
+        .transpose()
+    }
+
+    async fn next_queued_download_queue_record(&self) -> AppResult<Option<DownloadQueueRecord>> {
+        sqlx::query(&format!(
+            "{DOWNLOAD_QUEUE_SELECT} WHERE status = 'queued' ORDER BY added_at ASC, id ASC LIMIT 1"
+        ))
+        .fetch_optional(&self.db)
+        .await?
+        .map(download_queue_record_from_row)
+        .transpose()
+    }
+
+    async fn download_queue_record_by_client_request_id(
+        &self,
+        client_request_id: &str,
+    ) -> AppResult<Option<DownloadQueueRecord>> {
+        sqlx::query(&format!(
+            "{DOWNLOAD_QUEUE_SELECT} WHERE client_request_id = ? LIMIT 1"
+        ))
+        .bind(client_request_id)
+        .fetch_optional(&self.db)
+        .await?
+        .map(download_queue_record_from_row)
+        .transpose()
+    }
+
+    async fn mutate_download_queue_item<F>(
+        &self,
+        item_id: &str,
+        mutate: F,
+    ) -> AppResult<DownloadQueueItem>
+    where
+        F: FnOnce(&mut DownloadQueueItem),
+    {
+        let mut record = self.download_queue_record(item_id).await?;
+        mutate(&mut record.item);
+        record.item.updated_at = now_rfc3339();
+        self.save_download_queue_item(&record.item).await?;
+        self.emit_download_queue_item_updated(record.item.clone());
+        Ok(record.item)
+    }
+
+    async fn save_download_queue_item(&self, item: &DownloadQueueItem) -> AppResult<()> {
+        let logs_json = serde_json::to_string(&item.logs)?;
+        sqlx::query(
+            "UPDATE qobuz_download_queue SET \
+             status = ?, target_bot_id = ?, client_request_id = ?, logs_json = ?, \
+             started_at = ?, completed_at = ?, updated_at = ? \
+             WHERE id = ?",
+        )
+        .bind(download_queue_status_to_db(&item.status))
+        .bind(&item.target_bot_id)
+        .bind(&item.client_request_id)
+        .bind(logs_json)
+        .bind(&item.started_at)
+        .bind(&item.completed_at)
+        .bind(&item.updated_at)
+        .bind(&item.id)
+        .execute(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    fn emit_download_queue_item_updated(&self, item: DownloadQueueItem) {
+        self.emit(AppEvent::DownloadQueueItemUpdated {
+            event_id: new_event_id(),
+            occurred_at: now_rfc3339(),
+            item,
+        });
+    }
+
+    async fn append_download_queue_log(&self, item_id: &str, log: String) -> AppResult<()> {
+        self.mutate_download_queue_item(item_id, |item| {
+            push_download_queue_log(&mut item.logs, log);
+        })
+        .await
+        .map(|_| ())
+    }
+
+    async fn fail_download_queue_item(
+        &self,
+        item_id: &str,
+        error: &str,
+    ) -> AppResult<DownloadQueueItem> {
+        let item = self
+            .mutate_download_queue_item(item_id, |item| {
+                if !download_queue_status_is_terminal(&item.status) {
+                    item.status = DownloadQueueStatus::Failed;
+                    item.completed_at = Some(now_rfc3339());
+                }
+                push_download_queue_log(&mut item.logs, format!("Download failed: {error}"));
+            })
+            .await?;
+        self.spawn_download_queue_pump();
+        Ok(item)
+    }
+
+    async fn resolve_download_queue_target_bot(&self) -> Option<PublishedBot> {
+        self.runtime
+            .read()
+            .await
+            .published_bots
+            .iter()
+            .filter(|bot| bot.enabled)
+            .find(|bot| published_bot_matches_download_queue_target(bot))
+            .cloned()
+    }
+
+    async fn handle_download_queue_send_failed(
+        &self,
+        client_request_id: &str,
+        error: &str,
+    ) -> AppResult<()> {
+        let Some(record) = self
+            .download_queue_record_by_client_request_id(client_request_id)
+            .await?
+        else {
+            return Ok(());
+        };
+
+        if record.item.status == DownloadQueueStatus::Downloading {
+            self.fail_download_queue_item(&record.item.id, error)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn update_download_queue_from_incoming_message(
+        &self,
+        bot: &PublishedBot,
+        message: &ChatMessage,
+    ) -> AppResult<()> {
+        let Some(record) = self.active_download_queue_record_for_bot(&bot.id).await? else {
+            return Ok(());
+        };
+
+        let text = message.text.as_deref().unwrap_or_default();
+        let has_media = message
+            .media
+            .as_ref()
+            .is_some_and(|media| !media.is_empty());
+        let has_audio_or_document = message_has_audio_or_document(message);
+        if text.is_empty() && !has_media {
+            return Ok(());
+        }
+
+        let is_success = download_queue_text_is_success(text) || has_audio_or_document;
+        let is_failure = !is_success && download_queue_text_is_failure(text);
+        let item = self
+            .mutate_download_queue_item(&record.item.id, |item| {
+                if !text.is_empty() {
+                    push_download_queue_log(&mut item.logs, text.to_string());
+                } else if has_media {
+                    push_download_queue_log(
+                        &mut item.logs,
+                        "[Media/Attachment received]".to_string(),
+                    );
+                }
+
+                if is_success {
+                    item.status = DownloadQueueStatus::Completed;
+                    item.completed_at = Some(now_rfc3339());
+                    push_download_queue_log(
+                        &mut item.logs,
+                        "Download completed successfully.".to_string(),
+                    );
+                } else if is_failure {
+                    item.status = DownloadQueueStatus::Failed;
+                    item.completed_at = Some(now_rfc3339());
+                    push_download_queue_log(&mut item.logs, "Download failed.".to_string());
+                }
+            })
+            .await?;
+
+        if download_queue_status_is_terminal(&item.status) {
+            self.spawn_download_queue_pump();
+        }
+        Ok(())
     }
 
     pub fn emit(&self, event: AppEvent) {
@@ -474,7 +853,9 @@ impl AppState {
             AppEvent::ConnectionStatus { .. }
             | AppEvent::BotPublished { .. }
             | AppEvent::BotUpdated { .. }
-            | AppEvent::BotUnpublished { .. } => true,
+            | AppEvent::BotUnpublished { .. }
+            | AppEvent::DownloadQueueItemUpdated { .. }
+            | AppEvent::DownloadQueueCleared { .. } => true,
             AppEvent::TelegramAuthState { .. } => false,
             AppEvent::MessageNew { message, .. } | AppEvent::MessageEdited { message, .. } => {
                 message_visible_to_session(message, session)
@@ -923,6 +1304,7 @@ impl AppState {
                 tracing::debug!(%error, "failed to request Telegram account info after authorization ready");
             }
             self.spawn_download_recovery();
+            self.spawn_download_queue_pump();
         }
         Ok(status)
     }
@@ -985,6 +1367,112 @@ impl AppState {
                 tracing::warn!(%error, "failed to recover interrupted Telegram downloads");
             }
         });
+    }
+
+    fn spawn_download_queue_pump(&self) {
+        let state = self.clone();
+        tokio::spawn(async move {
+            if !state.begin_download_queue_pump().await {
+                return;
+            }
+
+            loop {
+                if let Err(error) = state.run_download_queue_pump().await {
+                    tracing::warn!(%error, "failed to run Qobuz download queue pump");
+                }
+                if !state.finish_download_queue_pump_iteration().await {
+                    break;
+                }
+            }
+        });
+    }
+
+    async fn begin_download_queue_pump(&self) -> bool {
+        let mut runtime = self.runtime.write().await;
+        if runtime.download_queue_pump_running {
+            runtime.download_queue_pump_requested = true;
+            false
+        } else {
+            runtime.download_queue_pump_running = true;
+            true
+        }
+    }
+
+    async fn finish_download_queue_pump_iteration(&self) -> bool {
+        let mut runtime = self.runtime.write().await;
+        if runtime.download_queue_pump_requested {
+            runtime.download_queue_pump_requested = false;
+            true
+        } else {
+            runtime.download_queue_pump_running = false;
+            false
+        }
+    }
+
+    async fn run_download_queue_pump(&self) -> AppResult<()> {
+        loop {
+            if self.active_download_queue_record().await?.is_some() {
+                return Ok(());
+            }
+
+            let Some(record) = self.next_queued_download_queue_record().await? else {
+                return Ok(());
+            };
+
+            let Some(target_bot) = self.resolve_download_queue_target_bot().await else {
+                self.fail_download_queue_item(
+                    &record.item.id,
+                    "MonomarsX downloader bot is not published; configure the bot before queueing albums",
+                )
+                .await?;
+                continue;
+            };
+
+            let client_request_id = new_id("req");
+            let command = format!("/dl {}", record.item.album_url);
+            let mut started = record.item.clone();
+            started.status = DownloadQueueStatus::Downloading;
+            started.target_bot_id = Some(target_bot.id.clone());
+            started.client_request_id = Some(client_request_id.clone());
+            started.started_at = Some(now_rfc3339());
+            started.completed_at = None;
+            started.updated_at = now_rfc3339();
+            started.logs.clear();
+            push_download_queue_log(
+                &mut started.logs,
+                format!("Initiating download request for {}", target_bot.title),
+            );
+            self.save_download_queue_item(&started).await?;
+            self.emit_download_queue_item_updated(started.clone());
+
+            let mut request = SendMessageRequest {
+                client_request_id: client_request_id.clone(),
+                text: command.clone(),
+                entities: Vec::new(),
+                reply_to_message_id: None,
+                attachment_ids: Vec::new(),
+                sent_by_access_key_name: None,
+            };
+            if record.enqueued_by_role == AuthRole::User {
+                request.sent_by_access_key_name = record.enqueued_by_access_key_name.clone();
+            }
+            let session = download_queue_record_session(&record);
+
+            match self
+                .send_message_to_bot(&session, &target_bot, request)
+                .await
+            {
+                Ok(_) => {
+                    self.append_download_queue_log(&started.id, format!("Sent command: {command}"))
+                        .await?;
+                    return Ok(());
+                }
+                Err(error) => {
+                    self.fail_download_queue_item(&started.id, &error.to_string())
+                        .await?;
+                }
+            }
+        }
     }
 
     fn spawn_cache_cleanup_scheduler(&self) {
@@ -1828,9 +2316,11 @@ impl AppState {
             event_id: new_event_id(),
             bot_id: Some(bot.id),
             occurred_at: now_rfc3339(),
-            client_request_id,
-            error,
+            client_request_id: client_request_id.clone(),
+            error: error.clone(),
         });
+        self.handle_download_queue_send_failed(&client_request_id, &error)
+            .await?;
 
         Ok(())
     }
@@ -2547,6 +3037,8 @@ impl AppState {
             && message.status != MessageStatus::Pending
         {
             self.finalize_pending_drafts_for_message(&bot.id, &message.id)
+                .await?;
+            self.update_download_queue_from_incoming_message(&bot, &message)
                 .await?;
         }
 
@@ -3276,6 +3768,7 @@ impl AppState {
             occurred_at: now_rfc3339(),
             bot: bot.summary(),
         });
+        self.spawn_download_queue_pump();
         Ok(bot)
     }
 
@@ -4452,6 +4945,80 @@ struct MessageVisibilityOwner {
     user: Option<InternalUser>,
 }
 
+fn push_download_queue_log(logs: &mut Vec<String>, log: String) {
+    logs.push(log);
+    if logs.len() > 100 {
+        let overflow = logs.len() - 100;
+        logs.drain(0..overflow);
+    }
+}
+
+fn download_queue_status_is_terminal(status: &DownloadQueueStatus) -> bool {
+    matches!(
+        status,
+        DownloadQueueStatus::Completed | DownloadQueueStatus::Failed
+    )
+}
+
+fn published_bot_matches_download_queue_target(bot: &PublishedBot) -> bool {
+    let username = bot
+        .username
+        .as_deref()
+        .map(|value| value.trim_start_matches('@').to_ascii_lowercase());
+    if matches!(username.as_deref(), Some("monomarsxbot" | "monomarsx")) {
+        return true;
+    }
+
+    bot.title.to_ascii_lowercase().contains("monomarsx")
+        || bot
+            .display_title
+            .as_deref()
+            .is_some_and(|title| title.to_ascii_lowercase().contains("monomarsx"))
+}
+
+fn download_queue_record_session(record: &DownloadQueueRecord) -> AuthSession {
+    AuthSession {
+        token: format!("download_queue:{}", record.item.id),
+        user: AuthUser {
+            id: record.enqueued_by_user_id.clone(),
+            display_name: record.enqueued_by_display_name.clone(),
+            role: record.enqueued_by_role.clone(),
+            access_key_id: record.enqueued_by_access_key_id.clone(),
+            access_key_name: record.enqueued_by_access_key_name.clone(),
+        },
+        issued_at: record.item.added_at.clone(),
+    }
+}
+
+fn message_has_audio_or_document(message: &ChatMessage) -> bool {
+    message.media.as_ref().is_some_and(|media| {
+        media.iter().any(|item| {
+            matches!(
+                item,
+                MessageMedia::Audio { .. } | MessageMedia::Document { .. }
+            )
+        })
+    })
+}
+
+fn download_queue_text_is_success(text: &str) -> bool {
+    let lowercase = text.to_ascii_lowercase();
+    text.contains("完成")
+        || text.contains("成功")
+        || text.contains("下载完成")
+        || lowercase.contains("success")
+        || lowercase.contains("done")
+}
+
+fn download_queue_text_is_failure(text: &str) -> bool {
+    let lowercase = text.to_ascii_lowercase();
+    text.contains("失败")
+        || text.contains("不支持")
+        || text.contains("错误")
+        || lowercase.contains("error")
+        || lowercase.contains("failed")
+}
+
 async fn collect_directory_contents(root: &Path) -> AppResult<DirectoryContents> {
     match tokio::fs::metadata(root).await {
         Ok(metadata) if metadata.is_dir() => {}
@@ -4786,6 +5353,35 @@ fn download_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DownloadItem> {
         status,
         proxy_url,
         error: row.try_get("error")?,
+    })
+}
+
+fn download_queue_record_from_row(row: SqliteRow) -> AppResult<DownloadQueueRecord> {
+    let logs_json: String = row.try_get("logs_json")?;
+    let logs = serde_json::from_str::<Vec<String>>(&logs_json).unwrap_or_default();
+
+    Ok(DownloadQueueRecord {
+        item: DownloadQueueItem {
+            id: row.try_get("id")?,
+            album_id: row.try_get("album_id")?,
+            title: row.try_get("title")?,
+            artist: row.try_get("artist")?,
+            cover_url: row.try_get("cover_url")?,
+            album_url: row.try_get("album_url")?,
+            status: download_queue_status_from_db(row.try_get::<String, _>("status")?.as_str()),
+            target_bot_id: row.try_get("target_bot_id")?,
+            client_request_id: row.try_get("client_request_id")?,
+            added_at: row.try_get("added_at")?,
+            started_at: row.try_get("started_at")?,
+            completed_at: row.try_get("completed_at")?,
+            updated_at: row.try_get("updated_at")?,
+            logs,
+        },
+        enqueued_by_user_id: row.try_get("enqueued_by_user_id")?,
+        enqueued_by_display_name: row.try_get("enqueued_by_display_name")?,
+        enqueued_by_role: auth_role_from_db(row.try_get::<String, _>("enqueued_by_role")?.as_str()),
+        enqueued_by_access_key_id: row.try_get("enqueued_by_access_key_id")?,
+        enqueued_by_access_key_name: row.try_get("enqueued_by_access_key_name")?,
     })
 }
 
@@ -5845,6 +6441,38 @@ fn download_status_from_db(value: &str) -> DownloadStatus {
     }
 }
 
+fn download_queue_status_to_db(status: &DownloadQueueStatus) -> &'static str {
+    match status {
+        DownloadQueueStatus::Queued => "queued",
+        DownloadQueueStatus::Downloading => "downloading",
+        DownloadQueueStatus::Completed => "completed",
+        DownloadQueueStatus::Failed => "failed",
+    }
+}
+
+fn download_queue_status_from_db(value: &str) -> DownloadQueueStatus {
+    match value {
+        "queued" => DownloadQueueStatus::Queued,
+        "downloading" => DownloadQueueStatus::Downloading,
+        "completed" => DownloadQueueStatus::Completed,
+        _ => DownloadQueueStatus::Failed,
+    }
+}
+
+fn auth_role_to_db(role: &AuthRole) -> &'static str {
+    match role {
+        AuthRole::Admin => "admin",
+        AuthRole::User => "user",
+    }
+}
+
+fn auth_role_from_db(value: &str) -> AuthRole {
+    match value {
+        "admin" => AuthRole::Admin,
+        _ => AuthRole::User,
+    }
+}
+
 fn workspace_file_status_to_db(status: &WorkspaceFileStatus) -> &'static str {
     match status {
         WorkspaceFileStatus::Pending => "pending",
@@ -5933,6 +6561,141 @@ mod tests {
         (dir, state, bot)
     }
 
+    async fn state_with_monomarsx_bot(
+        telegram_chat_id: i64,
+    ) -> (tempfile::TempDir, AppState, PublishedBot) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(AppConfig::for_test(dir.path()))
+            .await
+            .expect("state");
+
+        state
+            .apply_tdjson_update(json!({
+                "@type": "updateUser",
+                "user": {
+                    "@type": "user",
+                    "id": telegram_chat_id,
+                    "first_name": "MonomarsX",
+                    "last_name": "Bot",
+                    "type": { "@type": "userTypeBot" }
+                }
+            }))
+            .await
+            .expect("discover monomarsx bot");
+        let bot = state
+            .publish_bot(
+                &telegram_chat_id.to_string(),
+                None,
+                Some(true),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("publish monomarsx bot");
+
+        (dir, state, bot)
+    }
+
+    fn test_admin_session() -> AuthSession {
+        AuthSession {
+            token: "test_admin".to_string(),
+            user: AuthUser {
+                id: "admin:test".to_string(),
+                display_name: "Test Admin".to_string(),
+                role: AuthRole::Admin,
+                access_key_id: None,
+                access_key_name: None,
+            },
+            issued_at: now_rfc3339(),
+        }
+    }
+
+    fn queue_request(album_id: &str, title: &str) -> EnqueueDownloadQueueRequest {
+        EnqueueDownloadQueueRequest {
+            album_id: album_id.to_string(),
+            title: title.to_string(),
+            artist: Some("Queue Artist".to_string()),
+            cover_url: Some("https://static.example.test/cover.jpg".to_string()),
+            album_url: format!("https://www.qobuz.com/jp-ja/album/{album_id}"),
+        }
+    }
+
+    async fn wait_for_queue_status(
+        state: &AppState,
+        item_id: &str,
+        status: DownloadQueueStatus,
+    ) -> DownloadQueueItem {
+        for _ in 0..40 {
+            let items = state.list_download_queue().await.expect("queue");
+            if let Some(item) = items.into_iter().find(|item| item.id == item_id) {
+                if item.status == status {
+                    return item;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+
+        panic!("queue item {item_id} did not reach status {status:?}");
+    }
+
+    async fn insert_queue_record(
+        state: &AppState,
+        bot: &PublishedBot,
+        status: DownloadQueueStatus,
+        client_request_id: Option<&str>,
+    ) -> DownloadQueueItem {
+        let now = now_rfc3339();
+        let item = DownloadQueueItem {
+            id: new_id("q"),
+            album_id: new_id("album"),
+            title: "Queued Album".to_string(),
+            artist: "Queued Artist".to_string(),
+            cover_url: None,
+            album_url: "https://www.qobuz.com/jp-ja/album/queued".to_string(),
+            status,
+            target_bot_id: Some(bot.id.clone()),
+            client_request_id: client_request_id.map(ToOwned::to_owned),
+            added_at: now.clone(),
+            started_at: Some(now.clone()),
+            completed_at: None,
+            updated_at: now.clone(),
+            logs: Vec::new(),
+        };
+
+        sqlx::query(
+            "INSERT INTO qobuz_download_queue \
+             (id, album_id, title, artist, cover_url, album_url, status, target_bot_id, \
+              client_request_id, logs_json, enqueued_by_user_id, enqueued_by_display_name, \
+              enqueued_by_role, enqueued_by_access_key_id, enqueued_by_access_key_name, \
+              added_at, started_at, completed_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&item.id)
+        .bind(&item.album_id)
+        .bind(&item.title)
+        .bind(&item.artist)
+        .bind(&item.cover_url)
+        .bind(&item.album_url)
+        .bind(download_queue_status_to_db(&item.status))
+        .bind(&item.target_bot_id)
+        .bind(&item.client_request_id)
+        .bind("admin:test")
+        .bind("Test Admin")
+        .bind("admin")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(&item.added_at)
+        .bind(&item.started_at)
+        .bind(&item.completed_at)
+        .bind(&item.updated_at)
+        .execute(&state.db)
+        .await
+        .expect("insert queue row");
+
+        item
+    }
+
     #[tokio::test]
     async fn default_state_has_no_runtime_demo_data() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -5947,6 +6710,164 @@ mod tests {
         let status = state.telegram_status().await;
         assert!(!status.credentials_configured);
         assert_eq!(status.auth_state, TelegramAuthState::NotConfigured);
+    }
+
+    #[tokio::test]
+    async fn download_queue_does_not_fallback_to_first_bot() {
+        let (_dir, state, _bot) = state_with_published_bot(515151).await;
+        let item = state
+            .enqueue_download_queue_item(
+                &test_admin_session(),
+                queue_request("no-target", "No Target"),
+            )
+            .await
+            .expect("enqueue");
+
+        let failed = wait_for_queue_status(&state, &item.id, DownloadQueueStatus::Failed).await;
+        assert!(failed
+            .logs
+            .iter()
+            .any(|log| log.contains("MonomarsX downloader bot is not published")));
+
+        let audit_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outgoing_message_audit")
+            .fetch_one(&state.db)
+            .await
+            .expect("audit count");
+        assert_eq!(audit_count, 0);
+    }
+
+    #[tokio::test]
+    async fn download_queue_persists_across_state_reload() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(AppConfig::for_test(dir.path()))
+            .await
+            .expect("state");
+        let item = state
+            .enqueue_download_queue_item(
+                &test_admin_session(),
+                queue_request("persisted", "Persisted"),
+            )
+            .await
+            .expect("enqueue");
+        let failed = wait_for_queue_status(&state, &item.id, DownloadQueueStatus::Failed).await;
+
+        let restored = AppState::new(AppConfig::for_test(dir.path()))
+            .await
+            .expect("restored state");
+        let items = restored
+            .list_download_queue()
+            .await
+            .expect("restored queue");
+        let restored_item = items
+            .iter()
+            .find(|item| item.id == failed.id)
+            .expect("persisted queue item");
+        assert_eq!(restored_item.status, DownloadQueueStatus::Failed);
+        assert_eq!(restored_item.album_url, failed.album_url);
+        assert_eq!(restored_item.logs, failed.logs);
+    }
+
+    #[tokio::test]
+    async fn download_queue_handles_async_send_failed_by_request_id() {
+        let (_dir, state, bot) = state_with_monomarsx_bot(525252).await;
+        let first = insert_queue_record(
+            &state,
+            &bot,
+            DownloadQueueStatus::Downloading,
+            Some("req_queue_failed"),
+        )
+        .await;
+        let second = insert_queue_record(&state, &bot, DownloadQueueStatus::Queued, None).await;
+
+        state
+            .apply_tdjson_update(json!({
+                "@type": "updateMessageSendFailed",
+                "@extra": "req_queue_failed",
+                "chat_id": 525252,
+                "old_message_id": 600,
+                "error_message": "bot blocked"
+            }))
+            .await
+            .expect("send failed update");
+
+        let failed = wait_for_queue_status(&state, &first.id, DownloadQueueStatus::Failed).await;
+        assert!(failed.logs.iter().any(|log| log.contains("bot blocked")));
+
+        let progressed =
+            wait_for_queue_status(&state, &second.id, DownloadQueueStatus::Failed).await;
+        assert!(progressed
+            .logs
+            .iter()
+            .any(|log| log.contains("Telegram API credentials must be configured first")));
+    }
+
+    #[tokio::test]
+    async fn download_queue_completes_from_target_bot_incoming_media() {
+        let (_dir, state, bot) = state_with_monomarsx_bot(535353).await;
+        let item = insert_queue_record(
+            &state,
+            &bot,
+            DownloadQueueStatus::Downloading,
+            Some("req_queue_media"),
+        )
+        .await;
+
+        state
+            .apply_tdjson_update(json!({
+                "@type": "updateNewMessage",
+                "message": {
+                    "@type": "message",
+                    "id": 700,
+                    "chat_id": 535353,
+                    "is_outgoing": false,
+                    "date": 1770000600,
+                    "content": {
+                        "@type": "messageDocument",
+                        "document": {
+                            "@type": "document",
+                            "file_name": "album.zip",
+                            "mime_type": "application/zip",
+                            "document": {
+                                "@type": "file",
+                                "id": 900,
+                                "size": 123,
+                                "expected_size": 123,
+                                "local": {
+                                    "@type": "localFile",
+                                    "path": "",
+                                    "can_be_downloaded": true,
+                                    "can_be_deleted": false,
+                                    "is_downloading_active": false,
+                                    "is_downloading_completed": false,
+                                    "downloaded_size": 0
+                                },
+                                "remote": {
+                                    "@type": "remoteFile",
+                                    "id": "remote900",
+                                    "unique_id": "unique900",
+                                    "is_uploading_active": false,
+                                    "is_uploading_completed": true,
+                                    "uploaded_size": 123
+                                }
+                            }
+                        },
+                        "caption": {
+                            "@type": "formattedText",
+                            "text": "",
+                            "entities": []
+                        }
+                    }
+                }
+            }))
+            .await
+            .expect("incoming media");
+
+        let completed =
+            wait_for_queue_status(&state, &item.id, DownloadQueueStatus::Completed).await;
+        assert!(completed
+            .logs
+            .iter()
+            .any(|log| log.contains("Download completed successfully")));
     }
 
     #[tokio::test]

@@ -283,13 +283,8 @@ impl QobuzShopClient {
                 )
             })?;
 
-        let mut result = normalize_autosuggest_response(
-            region,
-            query,
-            page,
-            &source_url,
-            autocomplete,
-        );
+        let mut result =
+            normalize_autosuggest_response(region, query, page, &source_url, autocomplete);
 
         let mut tasks = Vec::new();
         for album in &result.albums {
@@ -346,7 +341,8 @@ impl QobuzShopClient {
             .captures(&text)
             .map(|caps| caps.get(1).unwrap().as_str().to_string());
 
-        let re_quality = regex::Regex::new(r#"class="album-quality__info"\s*>\s*([^<]+)\s*</span>"#).unwrap();
+        let re_quality =
+            regex::Regex::new(r#"class="album-quality__info"\s*>\s*([^<]+)\s*</span>"#).unwrap();
         let mut bits = None;
         let mut sampling = None;
         for caps in re_quality.captures_iter(&text) {
@@ -688,12 +684,15 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "live Qobuz debug probe; run manually when re-verifying upstream markup"]
     async fn test_print_raw_autosuggest() {
         let client = QobuzShopClient::new();
         let region = "jp-ja";
         let query = "beatles";
         let url = album_search_url(region, query, 1).unwrap();
-        let response = client.http.get(&url)
+        let response = client
+            .http
+            .get(&url)
             .header("accept", "*/*")
             .header("accept-language", "ja-JP,ja;q=0.9,en;q=0.8")
             .header("referer", "https://www.qobuz.com/jp-ja/shop")
@@ -706,6 +705,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "live Qobuz debug probe; run manually when re-verifying upstream markup"]
     async fn test_fetch_album_page() {
         let client = QobuzShopClient::new();
         let urls = [
@@ -720,32 +720,36 @@ mod tests {
                 .await
                 .unwrap();
             let text = response.text().await.unwrap();
-            
+
             // Release date regex
             let re_date = regex::Regex::new(r#""releaseDate"\s*:\s*"([^"]+)""#).unwrap();
-            let release_date = re_date.captures(&text)
+            let release_date = re_date
+                .captures(&text)
                 .map(|caps| caps.get(1).unwrap().as_str().to_string());
-            
+
             // Audio quality info: e.g. "24-Bit/96 kHz" or "16-Bit/44.1 kHz"
-            let re_quality = regex::Regex::new(r#"class="album-quality__info"\s*>\s*([^<]+)\s*</span>"#).unwrap();
+            let re_quality =
+                regex::Regex::new(r#"class="album-quality__info"\s*>\s*([^<]+)\s*</span>"#)
+                    .unwrap();
             let mut bits = None;
             let mut sampling = None;
             for caps in re_quality.captures_iter(&text) {
                 let s = caps.get(1).unwrap().as_str().trim();
                 println!("FOUND QUALITY PART: {}", s);
                 // Check if it matches e.g. "24-Bit/96 kHz" or "16-Bit/44.1 kHz"
-                let re_parse = regex::Regex::new(r#"(\d+)-Bit/(\d+(?:\.\d+)?)\s*(?:kHz|khz)"#).unwrap();
+                let re_parse =
+                    regex::Regex::new(r#"(\d+)-Bit/(\d+(?:\.\d+)?)\s*(?:kHz|khz)"#).unwrap();
                 if let Some(c) = re_parse.captures(s) {
                     bits = Some(c.get(1).unwrap().as_str().to_string());
                     sampling = Some(c.get(2).unwrap().as_str().to_string());
                     break;
                 }
             }
-            
-            println!("URL: {}\n  Release Date: {:?}\n  Bits: {:?}\n  Sampling: {:?}", url, release_date, bits, sampling);
+
+            println!(
+                "URL: {}\n  Release Date: {:?}\n  Bits: {:?}\n  Sampling: {:?}",
+                url, release_date, bits, sampling
+            );
         }
     }
 }
-
-
-

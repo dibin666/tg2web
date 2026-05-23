@@ -28,6 +28,8 @@ import {
   WorkspaceFile,
   QobuzStoreRegion,
   QobuzAlbumSearchResponse,
+  QueueItem,
+  EnqueueDownloadQueueRequest,
 } from "./types";
 
 export interface ApiClient {
@@ -45,6 +47,11 @@ export interface ApiClient {
   pauseDownload(downloadId: string): Promise<DownloadItem>;
   resumeDownload(downloadId: string): Promise<DownloadItem>;
   stopDownload(downloadId: string): Promise<DownloadItem>;
+  getDownloadQueue(): Promise<QueueItem[]>;
+  enqueueDownloadQueueItem(request: EnqueueDownloadQueueRequest): Promise<QueueItem>;
+  skipDownloadQueueItem(itemId: string): Promise<QueueItem>;
+  completeDownloadQueueItem(itemId: string): Promise<QueueItem>;
+  clearDownloadQueue(): Promise<void>;
   getSettings(): Promise<Settings>;
   updateSettings(settings: Partial<Settings>): Promise<Settings>;
   subscribeToEvents(onEvent: (event: AppEvent) => void, onAuthLost?: () => void): () => void;
@@ -319,6 +326,35 @@ export const apiClient: ApiClient = {
   stopDownload(downloadId: string) {
     return request<DownloadItem>(`/api/downloads/${encodeURIComponent(downloadId)}/stop`, {
       method: "POST",
+    });
+  },
+
+  getDownloadQueue() {
+    return request<QueueItem[]>("/api/download-queue");
+  },
+
+  enqueueDownloadQueueItem(body: EnqueueDownloadQueueRequest) {
+    return request<QueueItem>("/api/download-queue", {
+      method: "POST",
+      body: jsonBody(body),
+    });
+  },
+
+  skipDownloadQueueItem(itemId: string) {
+    return request<QueueItem>(`/api/download-queue/${encodeURIComponent(itemId)}/skip`, {
+      method: "POST",
+    });
+  },
+
+  completeDownloadQueueItem(itemId: string) {
+    return request<QueueItem>(`/api/download-queue/${encodeURIComponent(itemId)}/complete`, {
+      method: "POST",
+    });
+  },
+
+  clearDownloadQueue() {
+    return request<void>("/api/download-queue", {
+      method: "DELETE",
     });
   },
 

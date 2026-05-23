@@ -300,6 +300,51 @@ pub struct DownloadCacheSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadQueueStatus {
+    Queued,
+    Downloading,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadQueueItem {
+    pub id: String,
+    pub album_id: String,
+    pub title: String,
+    pub artist: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
+    pub album_url: String,
+    pub status: DownloadQueueStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_bot_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_request_id: Option<String>,
+    pub added_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    pub updated_at: String,
+    pub logs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnqueueDownloadQueueRequest {
+    pub album_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub cover_url: Option<String>,
+    pub album_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AccessKey {
     pub id: String,
@@ -640,6 +685,17 @@ pub enum AppEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
     },
+    #[serde(rename = "download_queue.item_updated")]
+    DownloadQueueItemUpdated {
+        event_id: String,
+        occurred_at: String,
+        item: DownloadQueueItem,
+    },
+    #[serde(rename = "download_queue.cleared")]
+    DownloadQueueCleared {
+        event_id: String,
+        occurred_at: String,
+    },
     #[serde(rename = "file.new")]
     FileNew {
         event_id: String,
@@ -692,6 +748,8 @@ impl AppEvent {
             | AppEvent::DownloadReady { event_id, .. }
             | AppEvent::DownloadFailed { event_id, .. }
             | AppEvent::DownloadDeleted { event_id, .. }
+            | AppEvent::DownloadQueueItemUpdated { event_id, .. }
+            | AppEvent::DownloadQueueCleared { event_id, .. }
             | AppEvent::FileNew { event_id, .. }
             | AppEvent::TelegramError { event_id, .. } => event_id,
         }
@@ -718,7 +776,9 @@ impl AppEvent {
                 Some(bot.id.as_str())
             }
             AppEvent::BotUnpublished { bot_id, .. } => Some(bot_id.as_str()),
-            AppEvent::TelegramAuthState { .. } => None,
+            AppEvent::TelegramAuthState { .. }
+            | AppEvent::DownloadQueueItemUpdated { .. }
+            | AppEvent::DownloadQueueCleared { .. } => None,
         }
     }
 }

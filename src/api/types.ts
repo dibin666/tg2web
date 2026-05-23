@@ -226,6 +226,8 @@ export type AppEvent =
   | (BaseEvent & { type: "download.ready"; download: DownloadItem })
   | (BaseEvent & { type: "download.failed"; download: DownloadItem })
   | (BaseEvent & { type: "download.deleted"; downloadId: string; fileId: string; messageId?: string })
+  | (BaseEvent & { type: "download_queue.item_updated"; item: QueueItem })
+  | (BaseEvent & { type: "download_queue.cleared" })
   | (BaseEvent & { type: "file.new"; file: WorkspaceFile })
   | (BaseEvent & { type: "telegram.error"; code?: string; message: string; raw?: unknown });
 
@@ -378,7 +380,19 @@ export type QueueItem = {
   coverUrl?: string;
   albumUrl: string;
   status: "queued" | "downloading" | "completed" | "failed";
+  targetBotId?: string;
+  clientRequestId?: string;
   addedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
   logs: string[];
 };
 
+export type EnqueueDownloadQueueRequest = {
+  albumId: string;
+  title: string;
+  artist?: string;
+  coverUrl?: string;
+  albumUrl: string;
+};

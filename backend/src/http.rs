@@ -4,10 +4,11 @@ use crate::{
     models::{
         AccessKeyLoginRequest, AdminLoginRequest, AppEvent, AuthLoginResponse, AuthRole,
         AuthSession, ClearDownloadCacheResponse, ConnectionStatus, CreateAccessKeyRequest,
-        DownloadCacheSummary, DownloadItem, HealthResponse, InlineKeyboardClickRequest,
-        LoginCodeRequest, LoginPasswordRequest, LoginPhoneRequest, PatchPublishedBotRequest,
-        PublishBotRequest, SaveTelegramCredentialsRequest, SearchUsernameRequest,
-        SendMessageRequest, SettingsPatch, TriggerDownloadRequest, WorkspaceFileStatus,
+        DownloadCacheSummary, DownloadItem, DownloadQueueItem, EnqueueDownloadQueueRequest,
+        HealthResponse, InlineKeyboardClickRequest, LoginCodeRequest, LoginPasswordRequest,
+        LoginPhoneRequest, PatchPublishedBotRequest, PublishBotRequest,
+        SaveTelegramCredentialsRequest, SearchUsernameRequest, SendMessageRequest, SettingsPatch,
+        TriggerDownloadRequest, WorkspaceFileStatus,
     },
     state::AppState,
 };
@@ -56,6 +57,20 @@ pub fn router(state: AppState) -> Router {
         .route("/downloads/{download_id}/pause", post(pause_download))
         .route("/downloads/{download_id}/resume", post(resume_download))
         .route("/downloads/{download_id}/stop", post(stop_download))
+        .route(
+            "/download-queue",
+            get(list_download_queue)
+                .post(enqueue_download_queue_item)
+                .delete(clear_download_queue),
+        )
+        .route(
+            "/download-queue/{item_id}/skip",
+            post(skip_download_queue_item),
+        )
+        .route(
+            "/download-queue/{item_id}/complete",
+            post(complete_download_queue_item),
+        )
         .route("/files/{file_id}/proxy", get(proxy_file))
         .route("/qobuz/store/regions", get(list_qobuz_store_regions))
         .route("/qobuz/store/search/albums", get(search_qobuz_store_albums))
@@ -425,6 +440,41 @@ async fn stop_download(
     let download = state.download(&download_id).await?;
     ensure_download_visible_to_session(&state, &session, &download).await?;
     Ok(Json(state.stop_download(&download_id).await?))
+}
+
+async fn list_download_queue(
+    State(state): State<AppState>,
+) -> AppResult<Json<Vec<DownloadQueueItem>>> {
+    Ok(Json(state.list_download_queue().await?))
+}
+
+async fn enqueue_download_queue_item(
+    Extension(session): Extension<AuthSession>,
+    State(state): State<AppState>,
+    Json(request): Json<EnqueueDownloadQueueRequest>,
+) -> AppResult<Json<DownloadQueueItem>> {
+    Ok(Json(
+        state.enqueue_download_queue_item(&session, request).await?,
+    ))
+}
+
+async fn skip_download_queue_item(
+    State(state): State<AppState>,
+    Path(item_id): Path<String>,
+) -> AppResult<Json<DownloadQueueItem>> {
+    Ok(Json(state.skip_download_queue_item(&item_id).await?))
+}
+
+async fn complete_download_queue_item(
+    State(state): State<AppState>,
+    Path(item_id): Path<String>,
+) -> AppResult<Json<DownloadQueueItem>> {
+    Ok(Json(state.complete_download_queue_item(&item_id).await?))
+}
+
+async fn clear_download_queue(State(state): State<AppState>) -> AppResult<StatusCode> {
+    state.clear_download_queue().await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn trigger_download(
