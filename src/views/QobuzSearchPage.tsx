@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { apiClient } from "../api/client";
-import { QobuzStoreRegion, QobuzAlbumSearchResponse } from "../api/types";
-import { Search, Music, ExternalLink, RefreshCw, AlertCircle, ShoppingBag, Disc, Download } from "lucide-react";
+import { QobuzStoreRegion, QobuzAlbumSearchResponse, QobuzAlbumSearchItem } from "../api/types";
+import { Search, Music, ExternalLink, RefreshCw, AlertCircle, ShoppingBag, Disc, Download, CheckCircle2 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
 const REGION_CN_MAP: Record<string, string> = {
@@ -31,57 +31,126 @@ const REGION_CN_MAP: Record<string, string> = {
   "us-en": "美国 (英文)",
 };
 
+type PushNotice = {
+  tone: "success" | "error";
+  message: string;
+};
+
+type QobuzSearchCache = {
+  selectedRegion: string;
+  query: string;
+  searchResult: QobuzAlbumSearchResponse | null;
+  searchError: string | null;
+};
+
+const qobuzSearchCache: QobuzSearchCache = {
+  selectedRegion: "",
+  query: "",
+  searchResult: null,
+  searchError: null,
+};
+
+const formatQobuzSampleRate = (value?: string) => {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return trimmed;
+  }
+  return parsed.toFixed(1);
+};
+
 export const QobuzSearchPage: React.FC = () => {
   const { addToDownloadQueue } = useApp();
   const [regions, setRegions] = useState<QobuzStoreRegion[]>([]);
   const [regionsLoading, setRegionsLoading] = useState(true);
   const [regionsError, setRegionsError] = useState<string | null>(null);
 
-  const [selectedRegion, setSelectedRegion] = useState("");
-  const [query, setQuery] = useState("");
+  const [selectedRegion, setSelectedRegion] = useState(qobuzSearchCache.selectedRegion);
+  const [query, setQuery] = useState(qobuzSearchCache.query);
   const [searching, setSearching] = useState(false);
-  const [searchResult, setSearchResult] = useState<QobuzAlbumSearchResponse | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchResult, setSearchResult] = useState<QobuzAlbumSearchResponse | null>(qobuzSearchCache.searchResult);
+  const [searchError, setSearchError] = useState<string | null>(qobuzSearchCache.searchError);
+  const [pushingAlbumId, setPushingAlbumId] = useState<string | null>(null);
+  const [pushNotice, setPushNotice] = useState<PushNotice | null>(null);
 
-  const fetchRegions = async () => {
+  const updateSelectedRegion = (value: string) => {
+    qobuzSearchCache.selectedRegion = value;
+    setSelectedRegion(value);
+  };
+
+  const updateQuery = (value: string) => {
+    qobuzSearchCache.query = value;
+    setQuery(value);
+  };
+
+  const updateSearchResult = (value: QobuzAlbumSearchResponse | null) => {
+    qobuzSearchCache.searchResult = value;
+    setSearchResult(value);
+  };
+
+  const updateSearchError = (value: string | null) => {
+    qobuzSearchCache.searchError = value;
+    setSearchError(value);
+  };
+
+  const fetchRegions = useCallback(async () => {
     setRegionsLoading(true);
     setRegionsError(null);
     try {
       const data = await apiClient.getQobuzRegions();
       setRegions(data);
       if (data.length > 0) {
-        // Default to jp-ja if available, otherwise first region
         const defaultReg = data.find(r => r.code === "jp-ja") || data[0];
-        setSelectedRegion(defaultReg.code);
+        const cachedRegion = qobuzSearchCache.selectedRegion;
+        const nextRegion = cachedRegion && data.some((region) => region.code === cachedRegion)
+          ? cachedRegion
+          : defaultReg.code;
+        qobuzSearchCache.selectedRegion = nextRegion;
+        setSelectedRegion(nextRegion);
       }
     } catch (err) {
       setRegionsError(err instanceof Error ? err.message : String(err));
     } finally {
       setRegionsLoading(false);
     }
-  };
+  }, []);
 
   // Fetch regions on mount
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchRegions();
-  }, []);
+  }, [fetchRegions]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || !selectedRegion) return;
 
     setSearching(true);
-    setSearchError(null);
-    setSearchResult(null);
+    updateSearchError(null);
+    updateSearchResult(null);
 
     try {
       const res = await apiClient.searchQobuzAlbums(selectedRegion, query.trim(), 1);
-      setSearchResult(res);
+      updateSearchResult(res);
     } catch (err) {
-      setSearchError(err instanceof Error ? err.message : String(err));
+      updateSearchError(err instanceof Error ? err.message : String(err));
     } finally {
       setSearching(false);
+    }
+  };
+
+  const handlePushDownload = async (album: QobuzAlbumSearchItem) => {
+    setPushingAlbumId(album.id);
+    setPushNotice(null);
+    try {
+      await addToDownloadQueue(album);
+      setPushNotice({ tone: "success", message: `已推送《${album.title}》到下载队列。` });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setPushNotice({ tone: "error", message: `推送失败：${message}` });
+    } finally {
+      setPushingAlbumId((current) => current === album.id ? null : current);
     }
   };
 
@@ -140,7 +209,7 @@ export const QobuzSearchPage: React.FC = () => {
               <label style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>商店地区</label>
               <select
                 value={selectedRegion}
-                onChange={(e) => setSelectedRegion(e.target.value)}
+                onChange={(e) => updateSelectedRegion(e.target.value)}
                 className="settings-input"
                 style={{
                   width: "180px",
@@ -176,7 +245,7 @@ export const QobuzSearchPage: React.FC = () => {
                   type="text"
                   placeholder="输入专辑名称、艺人..."
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => updateQuery(e.target.value)}
                   className="settings-input"
                   style={{
                     paddingLeft: "36px",
@@ -218,6 +287,27 @@ export const QobuzSearchPage: React.FC = () => {
           </form>
         )}
       </div>
+
+      {pushNotice && (
+        <div
+          style={{
+            marginBottom: "16px",
+            backgroundColor: pushNotice.tone === "success" ? "var(--accent-green-transparent)" : "var(--accent-red-transparent)",
+            border: `1px solid ${pushNotice.tone === "success" ? "var(--accent-green)" : "var(--accent-red)"}`,
+            color: pushNotice.tone === "success" ? "var(--accent-green)" : "var(--accent-red)",
+            borderRadius: "8px",
+            padding: "12px 14px",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            fontSize: "0.82rem",
+            fontWeight: 500,
+          }}
+        >
+          {pushNotice.tone === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+          <span>{pushNotice.message}</span>
+        </div>
+      )}
 
       {/* Results panel */}
       <div style={{ flex: 1 }}>
@@ -274,25 +364,29 @@ export const QobuzSearchPage: React.FC = () => {
                   gap: "20px",
                 }}
               >
-                {searchResult.albums.map((album) => (
-                  <a
-                    key={album.id}
-                    href={album.albumUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      backgroundColor: "var(--bg-sidebar)",
-                      border: "1px solid var(--border-color)",
-                      borderRadius: "8px",
-                      overflow: "hidden",
-                      textDecoration: "none",
-                      color: "inherit",
-                      transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
-                    }}
-                    className="qobuz-album-card"
-                  >
+                {searchResult.albums.map((album) => {
+                  const sampleRate = formatQobuzSampleRate(album.sampleRate);
+                  const isPushing = pushingAlbumId === album.id;
+
+                  return (
+                    <a
+                      key={album.id}
+                      href={album.albumUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        backgroundColor: "var(--bg-sidebar)",
+                        border: "1px solid var(--border-color)",
+                        borderRadius: "8px",
+                        overflow: "hidden",
+                        textDecoration: "none",
+                        color: "inherit",
+                        transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+                      }}
+                      className="qobuz-album-card"
+                    >
                     {/* Cover image container */}
                     <div style={{ position: "relative", width: "100%", paddingBottom: "100%", backgroundColor: "var(--bg-app)" }}>
                       {album.coverUrl ? (
@@ -402,11 +496,11 @@ export const QobuzSearchPage: React.FC = () => {
                             <span>曲目: {album.trackCount} 首</span>
                           </div>
                         )}
-                        {(album.bitDepth || album.sampleRate) && (
+                        {(album.bitDepth || sampleRate) && (
                           <div style={{ color: "var(--accent-blue)", fontWeight: "500" }}>
                             {album.bitDepth && <span>{album.bitDepth} Bit</span>}
-                            {album.bitDepth && album.sampleRate && <span> / </span>}
-                            {album.sampleRate && <span>{album.sampleRate} kHz</span>}
+                            {album.bitDepth && sampleRate && <span> / </span>}
+                            {sampleRate && <span>{sampleRate} kHz</span>}
                           </div>
                         )}
                       </div>
@@ -436,22 +530,25 @@ export const QobuzSearchPage: React.FC = () => {
 
                       {/* Download Push Button */}
                       <button
+                        type="button"
+                        disabled={Boolean(pushingAlbumId)}
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          addToDownloadQueue(album);
+                          void handlePushDownload(album);
                         }}
                         style={{
                           marginTop: "8px",
                           width: "100%",
                           padding: "6px 10px",
                           borderRadius: "6px",
-                          backgroundColor: "rgba(59, 130, 246, 0.08)",
+                          backgroundColor: isPushing ? "var(--accent-blue-transparent)" : "rgba(59, 130, 246, 0.08)",
                           border: "1px solid rgba(59, 130, 246, 0.2)",
                           color: "var(--accent-blue)",
                           fontSize: "0.72rem",
                           fontWeight: "600",
-                          cursor: "pointer",
+                          cursor: pushingAlbumId ? "not-allowed" : "pointer",
+                          opacity: pushingAlbumId && !isPushing ? 0.55 : 1,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -460,12 +557,13 @@ export const QobuzSearchPage: React.FC = () => {
                         }}
                         className="push-download-btn"
                       >
-                        <Download size={12} />
-                        <span>一键推送</span>
+                        {isPushing ? <RefreshCw size={12} style={{ animation: "spin 1.5s linear infinite" }} /> : <Download size={12} />}
+                        <span>{isPushing ? "推送中..." : "一键推送"}</span>
                       </button>
                     </div>
                   </a>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -479,7 +577,7 @@ export const QobuzSearchPage: React.FC = () => {
           box-shadow: var(--shadow-lg);
           border-color: var(--accent-blue) !important;
         }
-        .push-download-btn:hover {
+        .push-download-btn:not(:disabled):hover {
           background-color: var(--accent-blue) !important;
           color: white !important;
           border-color: var(--accent-blue) !important;

@@ -1,4 +1,5 @@
 use crate::{
+    archive_processing::{self, ArchiveProcessingRequest, ArchiveProcessingSettings},
     auth::AuthService,
     config::AppConfig,
     error::{AppError, AppResult},
@@ -13,7 +14,7 @@ use crate::{
         QobuzAlbumSearchResponse, QobuzStoreRegion, SendMessageRequest, Settings, SettingsPatch,
         TdlibRuntimeState, TelegramAuthState, TelegramChatKind, TelegramEntity, TelegramEntityType,
         TelegramSetupNextStep, TelegramStatusResponse, TriggerDownloadRequest, WorkspaceFile,
-        WorkspaceFileStatus,
+        WorkspaceFileStatus, MAX_ARCHIVE_FOLDER_TEMPLATE_LEN,
     },
     qobuz::{qobuz_store_regions, QobuzShopClient},
     storage,
@@ -119,6 +120,13 @@ struct DownloadQueueRecord {
     enqueued_by_role: AuthRole,
     enqueued_by_access_key_id: Option<String>,
     enqueued_by_access_key_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadArchiveProcessingContext {
+    file_name: Option<String>,
+    mime_type: Option<String>,
+    message_text: Option<String>,
 }
 
 impl Default for TelegramRuntime {
@@ -326,6 +334,16 @@ async fn load_settings(db: &SqlitePool) -> AppResult<Settings> {
             "cache_cleanup_interval_hours" => {
                 if let Ok(interval) = value.parse::<u16>() {
                     settings.cache_cleanup_interval_hours = interval;
+                }
+            }
+            "archive_folder_rename_enabled" => {
+                settings.archive_folder_rename_enabled =
+                    matches!(value.as_str(), "1" | "true" | "yes");
+            }
+            "archive_folder_template" => {
+                let value = value.trim();
+                if !value.is_empty() && value.len() <= MAX_ARCHIVE_FOLDER_TEMPLATE_LEN {
+                    settings.archive_folder_template = value.to_string();
                 }
             }
             _ => {}
@@ -1001,6 +1019,26 @@ impl AppState {
             )
             .await?;
             persist_app_setting(&self.db, "cache_last_cleanup_at", &now, &now).await?;
+        }
+
+        if let Some(enabled) = patch.archive_folder_rename_enabled {
+            runtime.settings.archive_folder_rename_enabled = enabled;
+            persist_app_setting(
+                &self.db,
+                "archive_folder_rename_enabled",
+                if enabled { "true" } else { "false" },
+                &now,
+            )
+            .await?;
+        }
+
+        if let Some(template) = patch.archive_folder_template {
+            let template = archive_processing::validate_archive_folder_template(&template)
+                .map_err(|message| {
+                    AppError::bad_request("invalid_archive_folder_template", message)
+                })?;
+            runtime.settings.archive_folder_template = template.clone();
+            persist_app_setting(&self.db, "archive_folder_template", &template, &now).await?;
         }
 
         Ok(runtime.settings.clone())
@@ -1938,16 +1976,23 @@ impl AppState {
         let (status, error, downloaded_bytes) = if completed {
             match local_path {
                 Some(path) => match tokio::fs::copy(path, self.cached_file_path(&file_id)).await {
-                    Ok(_) => {
-                        let cached_size = self.cached_file_state(&file_id).await?.1;
-                        (
-                            DownloadStatus::Ready,
-                            None,
-                            cached_size
-                                .max(downloaded_bytes)
-                                .max(size_bytes.unwrap_or_default()),
-                        )
-                    }
+                    Ok(_) => match self.process_cached_archive_for_file(&file_id).await {
+                        Ok(()) => {
+                            let cached_size = self.cached_file_state(&file_id).await?.1;
+                            (
+                                DownloadStatus::Ready,
+                                None,
+                                cached_size
+                                    .max(downloaded_bytes)
+                                    .max(size_bytes.unwrap_or_default()),
+                            )
+                        }
+                        Err(error) => (
+                            DownloadStatus::Failed,
+                            Some(format!("archive post-processing failed: {error}")),
+                            downloaded_bytes,
+                        ),
+                    },
                     Err(error) => (
                         DownloadStatus::Failed,
                         Some(format!(
@@ -4280,6 +4325,19 @@ impl AppState {
         download_id: &str,
         file_id: &str,
     ) -> AppResult<DownloadItem> {
+        if let Err(error) = self
+            .process_cached_archive_for_download(download_id, file_id)
+            .await
+        {
+            return self
+                .update_download_status(
+                    download_id,
+                    DownloadStatus::Failed,
+                    Some(format!("archive post-processing failed: {error}")),
+                )
+                .await;
+        }
+
         let size = tokio::fs::metadata(self.cached_file_path(file_id))
             .await?
             .len();
@@ -4482,6 +4540,100 @@ impl AppState {
         .await?;
 
         self.refresh_download_after_update(download_id).await
+    }
+
+    async fn process_cached_archive_for_file(&self, file_id: &str) -> AppResult<()> {
+        let Some(context) = self.download_archive_context_for_file(file_id).await? else {
+            return Ok(());
+        };
+        self.process_cached_archive_with_context(file_id, context)
+            .await
+    }
+
+    async fn process_cached_archive_for_download(
+        &self,
+        download_id: &str,
+        file_id: &str,
+    ) -> AppResult<()> {
+        let Some(context) = self
+            .download_archive_context_for_download(download_id)
+            .await?
+        else {
+            return Ok(());
+        };
+        self.process_cached_archive_with_context(file_id, context)
+            .await
+    }
+
+    async fn process_cached_archive_with_context(
+        &self,
+        file_id: &str,
+        context: DownloadArchiveProcessingContext,
+    ) -> AppResult<()> {
+        let settings = self.runtime.read().await.settings.clone();
+        archive_processing::maybe_process_archive(ArchiveProcessingRequest {
+            cache_path: self.cached_file_path(file_id),
+            workspace_root: self.config.media_cache_path.clone(),
+            file_name: context.file_name,
+            mime_type: context.mime_type,
+            message_text: context.message_text,
+            settings: ArchiveProcessingSettings {
+                enabled: settings.archive_folder_rename_enabled,
+                template: settings.archive_folder_template,
+            },
+        })
+        .await
+        .map(|_| ())
+    }
+
+    async fn download_archive_context_for_download(
+        &self,
+        download_id: &str,
+    ) -> AppResult<Option<DownloadArchiveProcessingContext>> {
+        sqlx::query(
+            "SELECT COALESCE(d.file_name, w.file_name) AS file_name, \
+                    COALESCE(d.mime_type, w.mime_type) AS mime_type, \
+                    c.text AS message_text \
+             FROM downloads d \
+             LEFT JOIN chat_messages c ON d.message_id IS NOT NULL \
+                AND c.is_ephemeral = 0 \
+                AND (c.id = d.message_id OR c.telegram_message_id = d.message_id) \
+             LEFT JOIN workspace_files w ON w.file_id = d.file_id \
+                OR (d.message_id IS NOT NULL AND w.message_id = d.message_id) \
+             WHERE d.id = ? \
+             ORDER BY w.received_at DESC \
+             LIMIT 1",
+        )
+        .bind(download_id)
+        .fetch_optional(&self.db)
+        .await?
+        .map(download_archive_context_from_row)
+        .transpose()
+    }
+
+    async fn download_archive_context_for_file(
+        &self,
+        file_id: &str,
+    ) -> AppResult<Option<DownloadArchiveProcessingContext>> {
+        sqlx::query(
+            "SELECT COALESCE(d.file_name, w.file_name) AS file_name, \
+                    COALESCE(d.mime_type, w.mime_type) AS mime_type, \
+                    c.text AS message_text \
+             FROM downloads d \
+             LEFT JOIN chat_messages c ON d.message_id IS NOT NULL \
+                AND c.is_ephemeral = 0 \
+                AND (c.id = d.message_id OR c.telegram_message_id = d.message_id) \
+             LEFT JOIN workspace_files w ON w.file_id = d.file_id \
+                OR (d.message_id IS NOT NULL AND w.message_id = d.message_id) \
+             WHERE d.file_id = ? \
+             ORDER BY d.updated_at DESC, w.received_at DESC \
+             LIMIT 1",
+        )
+        .bind(file_id)
+        .fetch_optional(&self.db)
+        .await?
+        .map(download_archive_context_from_row)
+        .transpose()
     }
 
     pub async fn cached_file_bytes(&self, file_id: &str) -> AppResult<Vec<u8>> {
@@ -5365,6 +5517,16 @@ fn download_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DownloadItem> {
         status,
         proxy_url,
         error: row.try_get("error")?,
+    })
+}
+
+fn download_archive_context_from_row(
+    row: SqliteRow,
+) -> AppResult<DownloadArchiveProcessingContext> {
+    Ok(DownloadArchiveProcessingContext {
+        file_name: row.try_get("file_name")?,
+        mime_type: row.try_get("mime_type")?,
+        message_text: row.try_get("message_text")?,
     })
 }
 

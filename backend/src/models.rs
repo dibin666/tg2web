@@ -2,6 +2,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub const DEFAULT_ARCHIVE_FOLDER_TEMPLATE: &str =
+    "{artist} - {album} ({year}) [WEB][{format} {bitDepth}B-{sampleRate}kHz]";
+pub const MAX_ARCHIVE_FOLDER_TEMPLATE_LEN: usize = 240;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BotStatus {
@@ -483,6 +487,8 @@ pub struct Settings {
     pub retention_days: u16,
     pub debug_mode: bool,
     pub cache_cleanup_interval_hours: u16,
+    pub archive_folder_rename_enabled: bool,
+    pub archive_folder_template: String,
 }
 
 impl Default for Settings {
@@ -494,6 +500,8 @@ impl Default for Settings {
             retention_days: 30,
             debug_mode: false,
             cache_cleanup_interval_hours: 0,
+            archive_folder_rename_enabled: true,
+            archive_folder_template: DEFAULT_ARCHIVE_FOLDER_TEMPLATE.to_string(),
         }
     }
 }
@@ -988,6 +996,18 @@ pub struct SettingsPatch {
     pub debug_mode: Option<bool>,
     #[serde(default)]
     pub cache_cleanup_interval_hours: Option<u16>,
+    #[serde(default)]
+    pub archive_folder_rename_enabled: Option<bool>,
+    #[serde(default)]
+    pub archive_folder_template: Option<String>,
+}
+
+impl SettingsPatch {
+    pub fn has_admin_only_fields(&self) -> bool {
+        self.retention_days.is_some()
+            || self.debug_mode.is_some()
+            || self.cache_cleanup_interval_hours.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

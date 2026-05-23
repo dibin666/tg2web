@@ -200,6 +200,8 @@ export type Settings = {
   retentionDays: number;
   debugMode: boolean;
   cacheCleanupIntervalHours: number;
+  archiveFolderRenameEnabled: boolean;
+  archiveFolderTemplate: string;
 };
 
 export type BaseEvent = {

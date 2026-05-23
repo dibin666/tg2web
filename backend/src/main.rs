@@ -1,3 +1,4 @@
+mod archive_processing;
 mod auth;
 mod config;
 mod error;

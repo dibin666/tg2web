@@ -121,6 +121,13 @@ const translations = {
     retentionPermanent: "永久 (保留历史)",
     localFileCaching: "本地文件缓存",
     storeDownloadsLocally: "在服务器磁盘本地存储下载的文件",
+    archiveRenameTitle: "压缩包文件夹命名",
+    archiveRenameDesc: "下载完成后重命名压缩包内的专辑文件夹",
+    archiveRenameTemplate: "文件夹命名格式",
+    archiveRenamePreview: "预览",
+    archiveRenameEnable: "开启压缩包文件夹重命名",
+    archiveRenameDisable: "关闭压缩包文件夹重命名",
+    archiveRenameSaved: "压缩包命名设置已保存。",
     clearDownloadCacheTitle: "本地下载缓存",
     clearDownloadCacheDesc: "删除服务器代理缓存中的已下载文件。消息记录会保留，文件可重新下载。",
     clearDownloadCacheBtn: "删除所有本地下载缓存",
@@ -247,6 +254,13 @@ const translations = {
     retentionPermanent: "Permanent (Audit history)",
     localFileCaching: "Local File Caching",
     storeDownloadsLocally: "Store downloads locally on server disk",
+    archiveRenameTitle: "Archive folder naming",
+    archiveRenameDesc: "Rename the album folder inside archives after download",
+    archiveRenameTemplate: "Folder naming format",
+    archiveRenamePreview: "Preview",
+    archiveRenameEnable: "Enable archive folder renaming",
+    archiveRenameDisable: "Disable archive folder renaming",
+    archiveRenameSaved: "Archive naming settings saved.",
     clearDownloadCacheTitle: "Local Download Cache",
     clearDownloadCacheDesc: "Delete downloaded files from the server proxy cache. Message history stays available and files can be downloaded again.",
     clearDownloadCacheBtn: "Delete all local download cache",
@@ -461,7 +475,7 @@ interface AppContextType {
   userRole: AuthRole | null;
   language: "zh" | "en";
   downloadQueue: QueueItem[];
-  addToDownloadQueue: (album: QobuzAlbumSearchItem) => void;
+  addToDownloadQueue: (album: QobuzAlbumSearchItem) => Promise<QueueItem>;
   skipDownloadQueueItem: (id: string) => void;
   markDownloadQueueItemComplete: (id: string) => void;
   clearDownloadQueue: () => void;
@@ -515,18 +529,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [downloadQueue, setDownloadQueue] = useState<QueueItem[]>([]);
 
-  const addToDownloadQueue = useCallback((album: QobuzAlbumSearchItem) => {
-    void apiClient.enqueueDownloadQueueItem({
+  const addToDownloadQueue = useCallback(async (album: QobuzAlbumSearchItem) => {
+    const item = await apiClient.enqueueDownloadQueueItem({
       albumId: album.id,
       title: album.title,
       artist: album.artist,
       coverUrl: album.coverUrl,
       albumUrl: album.albumUrl,
-    }).then((item) => {
-      setDownloadQueue((prev) => upsertQueueItem(prev, item));
-    }).catch((error) => {
-      console.error("Failed to add album to download queue", error);
     });
+    setDownloadQueue((prev) => upsertQueueItem(prev, item));
+    return item;
   }, []);
 
   const skipDownloadQueueItem = useCallback((id: string) => {

@@ -723,7 +723,23 @@ fn parse_sample_rate(value: Option<&str>) -> Option<String> {
         .replace("khz", "")
         .replace("KHz", "");
     let value = value.trim();
-    (!value.is_empty()).then(|| value.to_string())
+    (!value.is_empty()).then(|| format_sample_rate(value))
+}
+
+fn format_sample_rate(value: &str) -> String {
+    let trimmed = value.trim();
+    let Ok(parsed) = trimmed.parse::<f64>() else {
+        return trimmed.to_string();
+    };
+    if !parsed.is_finite() {
+        return trimmed.to_string();
+    }
+    let khz = if parsed >= 1000.0 {
+        parsed / 1000.0
+    } else {
+        parsed
+    };
+    format!("{:.1}", (khz * 10.0).round() / 10.0)
 }
 
 fn album_quality(is_hires: bool, is_dsd: bool, is_dxd: bool) -> Option<String> {
@@ -895,7 +911,7 @@ mod tests {
         assert_eq!(deluxe.track_count, Some(21));
         assert_eq!(deluxe.quality.as_deref(), Some("hi_res"));
         assert_eq!(deluxe.bit_depth, Some(24));
-        assert_eq!(deluxe.sample_rate.as_deref(), Some("192"));
+        assert_eq!(deluxe.sample_rate.as_deref(), Some("192.0"));
 
         let yellow_river = response
             .albums
@@ -919,6 +935,15 @@ mod tests {
             Some("https://www.qobuz.com/images/covers/da/ek/rh10buxv8ekda_230.jpg")
         );
         assert_eq!(yellow_river.quality.as_deref(), Some("hi_res,dsd"));
+        assert_eq!(yellow_river.sample_rate.as_deref(), Some("96.0"));
+    }
+
+    #[test]
+    fn parse_sample_rate_keeps_one_decimal_for_integer_khz() {
+        assert_eq!(parse_sample_rate(Some("48 kHz")).as_deref(), Some("48.0"));
+        assert_eq!(parse_sample_rate(Some("96")).as_deref(), Some("96.0"));
+        assert_eq!(parse_sample_rate(Some("44100")).as_deref(), Some("44.1"));
+        assert_eq!(parse_sample_rate(Some("44.1 kHz")).as_deref(), Some("44.1"));
     }
 
     #[tokio::test]

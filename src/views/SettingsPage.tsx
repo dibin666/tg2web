@@ -2,9 +2,9 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { adminApiClient } from "../api/client";
-import { AccessKey, DiscoveredTelegramChat, PublishedBot, TelegramStatusResponse } from "../api/types";
-import { useApp } from "../context/AppContext";
-import { Bot, Check, ChevronLeft, ChevronRight, Copy, Database, KeyRound, RefreshCw, Save, Search, Send, Settings, Shield, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
+import { AccessKey, DiscoveredTelegramChat, PublishedBot, Settings as AppSettings, TelegramStatusResponse } from "../api/types";
+import { TxKey, useApp } from "../context/AppContext";
+import { Archive, Bot, Check, ChevronLeft, ChevronRight, Copy, Database, KeyRound, RefreshCw, Save, Search, Send, Settings as SettingsIcon, Shield, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
 
 const BOT_LIST_PAGE_SIZE = 8;
 
@@ -114,6 +114,137 @@ const upsertDiscoveredChat = (chats: DiscoveredTelegramChat[], incoming: Discove
 
 const isDiscoveryPendingError = (error: unknown) =>
   error instanceof Error && error.message.includes("username search was submitted");
+
+const ARCHIVE_TEMPLATE_SAMPLE: Record<string, string> = {
+  artist: "Artist",
+  album: "Album",
+  year: "2025",
+  provider: "Qobuz",
+  source: "WEB",
+  format: "FLAC",
+  bitDepth: "16",
+  sampleRate: "44.1",
+  quality: "16B-44.1kHz",
+};
+
+const INVALID_FOLDER_NAME_CHARS = new Set(["\\", "/", ":", "*", "?", "\"", "<", ">", "|"]);
+
+const sanitizePreviewFolderName = (value: string) => {
+  const sanitized = value
+    .split("")
+    .map((char) => (char.charCodeAt(0) < 32 || INVALID_FOLDER_NAME_CHARS.has(char) ? "-" : char))
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+|\.+$/g, "");
+  return sanitized || "Untitled Album";
+};
+
+const archiveTemplatePreview = (template: string) => {
+  const rendered = Object.entries(ARCHIVE_TEMPLATE_SAMPLE).reduce(
+    (value, [key, replacement]) => value.replaceAll(`{${key}}`, replacement),
+    template.trim(),
+  );
+  return sanitizePreviewFolderName(rendered.replace(/\{[A-Za-z][A-Za-z0-9_]*\}/g, ""));
+};
+
+type ArchiveRenameSettingsPanelProps = {
+  settings: AppSettings;
+  updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
+  setNotice: React.Dispatch<React.SetStateAction<string | null>>;
+  t: (key: TxKey) => string;
+};
+
+const ArchiveRenameSettingsPanel: React.FC<ArchiveRenameSettingsPanelProps> = ({
+  settings,
+  updateSettings,
+  setNotice,
+  t,
+}) => {
+  const [draftTemplate, setDraftTemplate] = React.useState(settings.archiveFolderTemplate);
+  const [saving, setSaving] = React.useState(false);
+  const preview = React.useMemo(() => archiveTemplatePreview(draftTemplate), [draftTemplate]);
+  const trimmedTemplate = draftTemplate.trim();
+  const templateChanged = trimmedTemplate !== settings.archiveFolderTemplate;
+  const canSave = Boolean(trimmedTemplate) && templateChanged && !saving;
+
+  const runArchiveSettingsUpdate = async (
+    patch: Partial<AppSettings>,
+    successMessage: string,
+  ) => {
+    try {
+      setSaving(true);
+      await updateSettings(patch);
+      setNotice(successMessage);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="settings-archive-control">
+      <div className="settings-archive-header">
+        <div>
+          <div className="settings-inline-title">
+            <Archive size={15} />
+            <span>{t("archiveRenameTitle")}</span>
+          </div>
+          <div className="settings-inline-desc">{t("archiveRenameDesc")}</div>
+        </div>
+        <button
+          type="button"
+          className="icon-button archive-toggle-button"
+          onClick={() =>
+            runArchiveSettingsUpdate(
+              { archiveFolderRenameEnabled: !settings.archiveFolderRenameEnabled },
+              t("archiveRenameSaved"),
+            )
+          }
+          disabled={saving}
+          title={settings.archiveFolderRenameEnabled ? t("archiveRenameDisable") : t("archiveRenameEnable")}
+          aria-label={settings.archiveFolderRenameEnabled ? t("archiveRenameDisable") : t("archiveRenameEnable")}
+        >
+          {settings.archiveFolderRenameEnabled ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+        </button>
+      </div>
+
+      <label className="settings-compact-label" htmlFor="archive-folder-template">
+        {t("archiveRenameTemplate")}
+      </label>
+      <div className="archive-template-actions">
+        <input
+          id="archive-folder-template"
+          name="archive-folder-template"
+          className="settings-input"
+          value={draftTemplate}
+          onChange={(event) => setDraftTemplate(event.target.value)}
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          className="btn-secondary archive-template-save"
+          disabled={!canSave}
+          onClick={() =>
+            runArchiveSettingsUpdate(
+              { archiveFolderTemplate: trimmedTemplate },
+              t("archiveRenameSaved"),
+            )
+          }
+          title={t("saveBtn")}
+        >
+          <Save size={14} />
+        </button>
+      </div>
+
+      <div className="archive-template-preview">
+        <span>{t("archiveRenamePreview")}</span>
+        <code>{preview}</code>
+      </div>
+    </div>
+  );
+};
 
 export const SettingsPage: React.FC = () => {
   const { settings, updateSettings, connectionStatus, t } = useApp();
@@ -357,7 +488,7 @@ export const SettingsPage: React.FC = () => {
     >
       <div style={{ marginBottom: "24px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px" }}>
         <h1 style={{ fontSize: "1.2rem", fontWeight: "700", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px" }}>
-          <Settings size={20} style={{ color: "var(--accent-blue)" }} />
+          <SettingsIcon size={20} style={{ color: "var(--accent-blue)" }} />
           <span>{t("settingsTitle")}</span>
         </h1>
         <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "6px", lineHeight: "1.4" }}>
@@ -801,6 +932,13 @@ export const SettingsPage: React.FC = () => {
                   <span>查看缓存详情</span>
                 </Link>
               </div>
+              <ArchiveRenameSettingsPanel
+                key={settings.archiveFolderTemplate}
+                settings={settings}
+                updateSettings={updateSettings}
+                setNotice={setNotice}
+                t={t}
+              />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "16px" }}>
                 <div>
                   <div style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: "600" }}>{t("devDebugMode")}</div>
@@ -1008,6 +1146,81 @@ export const SettingsPage: React.FC = () => {
           padding: 10px;
           margin-top: 14px;
         }
+        .settings-archive-control {
+          border: 1px solid var(--border-color);
+          border-radius: 6px;
+          padding: 10px;
+          margin-top: 14px;
+          background-color: #ffffff;
+        }
+        .settings-archive-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 10px;
+        }
+        .settings-inline-title {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          color: var(--text-primary);
+          font-size: 0.8rem;
+          font-weight: 700;
+        }
+        .settings-inline-title svg {
+          color: var(--accent-blue);
+        }
+        .settings-inline-desc {
+          color: var(--text-muted);
+          font-size: 0.7rem;
+          line-height: 1.4;
+          margin-top: 2px;
+        }
+        .settings-compact-label {
+          display: block;
+          color: var(--text-secondary);
+          font-size: 0.72rem;
+          font-weight: 600;
+          margin-bottom: 6px;
+        }
+        .archive-template-actions {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 38px;
+          gap: 8px;
+          align-items: center;
+        }
+        .archive-template-actions .settings-input {
+          margin: 0;
+          font-family: var(--font-mono);
+          font-size: 0.74rem;
+        }
+        .archive-template-save {
+          min-width: 38px;
+          height: 38px;
+          justify-content: center;
+          padding: 0;
+        }
+        .archive-template-preview {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 8px;
+          align-items: center;
+          border: 1px dashed var(--border-color);
+          border-radius: 6px;
+          padding: 8px;
+          margin-top: 8px;
+          color: var(--text-muted);
+          font-size: 0.7rem;
+        }
+        .archive-template-preview code {
+          color: var(--text-primary);
+          font-family: var(--font-mono);
+          overflow-wrap: anywhere;
+        }
+        .archive-toggle-button {
+          color: var(--accent-blue);
+        }
         .danger-button {
           color: #dc2626;
         }
@@ -1037,6 +1250,13 @@ export const SettingsPage: React.FC = () => {
           .settings-cache-control {
             align-items: flex-start;
             flex-direction: column;
+          }
+          .archive-template-actions,
+          .archive-template-preview {
+            grid-template-columns: 1fr;
+          }
+          .archive-template-save {
+            width: 100%;
           }
         }
       `}</style>

@@ -576,7 +576,9 @@ async fn update_settings(
     State(state): State<AppState>,
     Json(patch): Json<SettingsPatch>,
 ) -> AppResult<Json<crate::models::Settings>> {
-    ensure_admin_session(&session)?;
+    if patch.has_admin_only_fields() {
+        ensure_admin_session(&session)?;
+    }
     Ok(Json(state.update_settings(patch).await?))
 }
 
