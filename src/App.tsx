@@ -15,19 +15,11 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
 
   if (loading) {
     return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100vh",
-          backgroundColor: "var(--bg-app)",
-          color: "var(--text-primary)",
-          fontSize: "0.9rem",
-          fontWeight: "500",
-        }}
-      >
-        Initializing system...
+      <div className="flex h-svh items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <div className="gradient-brand size-10 animate-pulse rounded-2xl" />
+          <span className="text-sm font-medium">正在初始化系统...</span>
+        </div>
       </div>
     );
   }

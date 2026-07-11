@@ -1,7 +1,13 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
-import { Terminal, Shield, ArrowRight, Loader, User, Lock } from "lucide-react";
+import { ModeToggle } from "../components/ModeToggle";
+import { Send, Shield, ArrowRight, Loader2, User, Lock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
 export const LoginPage: React.FC = () => {
   const { login, t } = useApp();
@@ -55,155 +61,93 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100vh",
-        width: "100vw",
-        backgroundColor: "var(--bg-app)",
-        padding: "20px",
-      }}
-      className="animate-fade-in"
+  const switchTab = (tab: "user" | "admin") => {
+    if (loading) return;
+    setActiveTab(tab);
+    setError("");
+    setPassword("");
+    setAccessKeyInput("");
+  };
+
+  const submitButton = (label: string) => (
+    <Button
+      type="submit"
+      disabled={loading}
+      className={cn(
+        "h-10 w-full rounded-xl text-sm font-semibold text-white shadow-sm transition-all",
+        "gradient-brand hover:opacity-90 active:scale-[0.99]"
+      )}
     >
+      {loading ? (
+        <>
+          <Loader2 className="size-4 animate-spin" />
+          <span>{t("authorizing")}</span>
+        </>
+      ) : (
+        <>
+          <span>{label}</span>
+          <ArrowRight className="size-4" />
+        </>
+      )}
+    </Button>
+  );
+
+  return (
+    <div className="relative flex h-svh w-full items-center justify-center overflow-hidden bg-background p-5">
+      {/* Warm radial glow backdrop */}
       <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
         style={{
-          width: "100%",
-          maxWidth: "400px",
-          backgroundColor: "var(--bg-sidebar)",
-          border: "1px solid var(--border-color)",
-          borderRadius: "12px",
-          padding: "32px 28px",
-          boxShadow: "0 10px 30px -10px rgba(0, 0, 0, 0.08)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "24px",
+          background:
+            "radial-gradient(600px 420px at 18% 8%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 70%), radial-gradient(520px 380px at 85% 92%, color-mix(in srgb, var(--chart-2) 22%, transparent), transparent 70%)",
         }}
-      >
-        {/* Header */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-          <div
-            style={{
-              backgroundColor: "var(--accent-blue-transparent)",
-              padding: "12px",
-              borderRadius: "10px",
-              color: "var(--accent-blue)",
-              marginBottom: "14px",
-              display: "flex",
-            }}
-          >
-            <Terminal size={24} />
+      />
+
+      {/* Theme toggle */}
+      <div className="absolute right-4 top-4 z-10">
+        <ModeToggle />
+      </div>
+
+      {/* Login card */}
+      <div className="message-entry glass-panel shadow-float relative z-10 flex w-full max-w-sm flex-col gap-6 rounded-3xl p-8">
+        {/* Brand */}
+        <div className="flex flex-col items-center text-center">
+          <div className="gradient-brand mb-4 flex size-14 items-center justify-center rounded-2xl text-white shadow-sm">
+            <Send className="size-6 -translate-x-px translate-y-px" />
           </div>
-          <h2 style={{ fontSize: "1.2rem", fontWeight: "700", color: "var(--text-primary)", letterSpacing: "-0.01em" }}>
-            {t("loginTitle")}
-          </h2>
-          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "4px" }}>
-            {t("loginSub")}
-          </span>
+          <h2 className="font-serif text-xl font-semibold">{t("loginTitle")}</h2>
+          <span className="mt-1 text-xs text-muted-foreground">{t("loginSub")}</span>
         </div>
 
-        {/* Security Alert Warning */}
-        <div
-          style={{
-            backgroundColor: "rgba(239, 68, 68, 0.03)",
-            border: "1px solid rgba(239, 68, 68, 0.12)",
-            borderRadius: "8px",
-            padding: "12px 14px",
-            display: "flex",
-            gap: "10px",
-            fontSize: "0.7rem",
-            color: "var(--accent-red)",
-            lineHeight: "1.45",
-          }}
-        >
-          <Shield size={16} style={{ flexShrink: 0, marginTop: "2px" }} />
+        {/* Security note */}
+        <div className="flex gap-2.5 rounded-xl bg-[var(--warning-soft)] px-3.5 py-3 text-[11px] leading-relaxed text-warning">
+          <Shield className="mt-0.5 size-4 shrink-0" />
           <span>{t("securityWarning")}</span>
         </div>
 
-        {/* Role Tabs Selection */}
-        <div
-          style={{
-            display: "flex",
-            backgroundColor: "var(--bg-app)",
-            padding: "4px",
-            borderRadius: "8px",
-            border: "1px solid var(--border-color)",
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              if (!loading) {
-                setActiveTab("user");
-                setError("");
-                setPassword("");
-                setAccessKeyInput("");
-              }
-            }}
-            style={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "6px",
-              padding: "8px 12px",
-              fontSize: "0.75rem",
-              fontWeight: "600",
-              borderRadius: "6px",
-              border: "none",
-              cursor: loading ? "not-allowed" : "pointer",
-              backgroundColor: activeTab === "user" ? "var(--bg-sidebar)" : "transparent",
-              color: activeTab === "user" ? "var(--accent-blue)" : "var(--text-secondary)",
-              boxShadow: activeTab === "user" ? "0 2px 4px rgba(0, 0, 0, 0.03)" : "none",
-              transition: "all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1)",
-            }}
-          >
-            <User size={14} />
-            <span>{t("userAccessTab")}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (!loading) {
-                setActiveTab("admin");
-                setError("");
-                setPassword("");
-                setAccessKeyInput("");
-              }
-            }}
-            style={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "6px",
-              padding: "8px 12px",
-              fontSize: "0.75rem",
-              fontWeight: "600",
-              borderRadius: "6px",
-              border: "none",
-              cursor: loading ? "not-allowed" : "pointer",
-              backgroundColor: activeTab === "admin" ? "var(--bg-sidebar)" : "transparent",
-              color: activeTab === "admin" ? "var(--accent-blue)" : "var(--text-secondary)",
-              boxShadow: activeTab === "admin" ? "0 2px 4px rgba(0, 0, 0, 0.03)" : "none",
-              transition: "all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1)",
-            }}
-          >
-            <Lock size={14} />
-            <span>{t("adminTerminalTab")}</span>
-          </button>
-        </div>
+        {/* Role tabs */}
+        <Tabs value={activeTab} onValueChange={(v) => switchTab(v as "user" | "admin")}>
+          <TabsList className="grid h-10 w-full grid-cols-2 rounded-xl">
+            <TabsTrigger value="user" className="gap-1.5 rounded-lg text-xs font-semibold" disabled={loading}>
+              <User className="size-3.5" />
+              {t("userAccessTab")}
+            </TabsTrigger>
+            <TabsTrigger value="admin" className="gap-1.5 rounded-lg text-xs font-semibold" disabled={loading}>
+              <Lock className="size-3.5" />
+              {t("adminTerminalTab")}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-        {/* Tab Forms */}
+        {/* Forms */}
         {activeTab === "user" ? (
-          <form onSubmit={handleUserLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <div className="settings-group" style={{ marginBottom: "0" }}>
-              <label htmlFor="access-key" style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>
+          <form onSubmit={handleUserLogin} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="access-key" className="text-xs font-semibold text-muted-foreground">
                 {t("accessKeyLabel")}
-              </label>
-              <input
+              </Label>
+              <Input
                 id="access-key"
                 name="access-key"
                 type="password"
@@ -212,55 +156,20 @@ export const LoginPage: React.FC = () => {
                 placeholder={t("accessKeyPlaceholder")}
                 autoComplete="current-password"
                 disabled={loading}
-                className="settings-input"
-                style={{
-                  fontSize: "0.85rem",
-                  padding: "10px 12px",
-                  borderColor: error ? "var(--accent-red)" : "var(--border-color)",
-                  borderRadius: "8px",
-                  marginTop: "6px",
-                }}
+                aria-invalid={Boolean(error)}
+                className="h-10 rounded-xl bg-card/60"
               />
             </div>
-
-            {error && (
-              <div style={{ fontSize: "0.75rem", color: "var(--accent-red)", fontWeight: "500" }}>
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary"
-              style={{
-                padding: "10px 16px",
-                justifyContent: "center",
-                fontSize: "0.85rem",
-                width: "100%",
-                borderRadius: "8px",
-              }}
-            >
-              {loading ? (
-                <>
-                  <Loader size={16} className="animate-pulse-slow" />
-                  <span>{t("authorizing")}</span>
-                </>
-              ) : (
-                <>
-                  <span>{t("enterUserPortal")}</span>
-                  <ArrowRight size={16} />
-                </>
-              )}
-            </button>
+            {error && <div className="text-xs font-medium text-destructive">{error}</div>}
+            {submitButton(t("enterUserPortal"))}
           </form>
         ) : (
-          <form onSubmit={handleAdminLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <div className="settings-group" style={{ marginBottom: "0" }}>
-              <label htmlFor="admin-password" style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>
+          <form onSubmit={handleAdminLogin} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="admin-password" className="text-xs font-semibold text-muted-foreground">
                 {t("passwordLabel")}
-              </label>
-              <input
+              </Label>
+              <Input
                 id="admin-password"
                 name="admin-password"
                 type="password"
@@ -269,47 +178,12 @@ export const LoginPage: React.FC = () => {
                 placeholder={t("passwordPlaceholder")}
                 autoComplete="current-password"
                 disabled={loading}
-                className="settings-input"
-                style={{
-                  fontSize: "0.85rem",
-                  padding: "10px 12px",
-                  borderColor: error ? "var(--accent-red)" : "var(--border-color)",
-                  borderRadius: "8px",
-                  marginTop: "6px",
-                }}
+                aria-invalid={Boolean(error)}
+                className="h-10 rounded-xl bg-card/60"
               />
             </div>
-
-            {error && (
-              <div style={{ fontSize: "0.75rem", color: "var(--accent-red)", fontWeight: "500" }}>
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary"
-              style={{
-                padding: "10px 16px",
-                justifyContent: "center",
-                fontSize: "0.85rem",
-                width: "100%",
-                borderRadius: "8px",
-              }}
-            >
-              {loading ? (
-                <>
-                  <Loader size={16} className="animate-pulse-slow" />
-                  <span>{t("authorizing")}</span>
-                </>
-              ) : (
-                <>
-                  <span>{t("loginAsAdmin")}</span>
-                  <ArrowRight size={16} />
-                </>
-              )}
-            </button>
+            {error && <div className="text-xs font-medium text-destructive">{error}</div>}
+            {submitButton(t("loginAsAdmin"))}
           </form>
         )}
       </div>

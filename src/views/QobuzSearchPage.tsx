@@ -1,40 +1,32 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { apiClient } from "../api/client";
 import { QobuzStoreRegion, QobuzAlbumSearchResponse, QobuzAlbumSearchItem } from "../api/types";
-import { Search, Music, ExternalLink, RefreshCw, AlertCircle, ShoppingBag, Disc, Download, CheckCircle2 } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import { PageHeader } from "../components/PageHeader";
+import { Search, Music, ExternalLink, AlertCircle, ShoppingBag, Disc, Download, CheckCircle2, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 const REGION_CN_MAP: Record<string, string> = {
-  "au-en": "澳大利亚 (英文)",
-  "at-de": "奥地利 (德文)",
-  "be-fr": "比利时 (法文)",
-  "be-nl": "比利时 (荷兰文)",
-  "ca-en": "加拿大 (英文)",
-  "ca-fr": "加拿大 (法文)",
-  "dk-en": "丹麦 (英文)",
-  "fi-en": "芬兰 (英文)",
-  "fr-fr": "法国 (法文)",
-  "de-de": "德国 (德文)",
-  "ie-en": "爱尔兰 (英文)",
-  "it-it": "意大利 (意文)",
-  "jp-ja": "日本 (日文)",
-  "lu-de": "卢森堡 (德文)",
-  "lu-fr": "卢森堡 (法文)",
-  "nl-nl": "荷兰 (荷兰文)",
-  "nz-en": "新西兰 (英文)",
-  "no-en": "挪威 (英文)",
-  "es-es": "西班牙 (西班牙文)",
-  "se-en": "瑞典 (英文)",
-  "ch-de": "瑞士 (德文)",
-  "ch-fr": "瑞士 (法文)",
-  "gb-en": "英国 (英文)",
-  "us-en": "美国 (英文)",
+  "au-en": "澳大利亚 (英文)", "at-de": "奥地利 (德文)", "be-fr": "比利时 (法文)", "be-nl": "比利时 (荷兰文)",
+  "ca-en": "加拿大 (英文)", "ca-fr": "加拿大 (法文)", "dk-en": "丹麦 (英文)", "fi-en": "芬兰 (英文)",
+  "fr-fr": "法国 (法文)", "de-de": "德国 (德文)", "ie-en": "爱尔兰 (英文)", "it-it": "意大利 (意文)",
+  "jp-ja": "日本 (日文)", "lu-de": "卢森堡 (德文)", "lu-fr": "卢森堡 (法文)", "nl-nl": "荷兰 (荷兰文)",
+  "nz-en": "新西兰 (英文)", "no-en": "挪威 (英文)", "es-es": "西班牙 (西班牙文)", "se-en": "瑞典 (英文)",
+  "ch-de": "瑞士 (德文)", "ch-fr": "瑞士 (法文)", "gb-en": "英国 (英文)", "us-en": "美国 (英文)",
 };
 
-type PushNotice = {
-  tone: "success" | "error";
-  message: string;
-};
+type PushNotice = { tone: "success" | "error"; message: string };
 
 type QobuzSearchCache = {
   selectedRegion: string;
@@ -54,10 +46,7 @@ const formatQobuzSampleRate = (value?: string) => {
   if (!value) return undefined;
   const trimmed = value.trim();
   const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed)) {
-    return trimmed;
-  }
-  return parsed.toFixed(1);
+  return Number.isFinite(parsed) ? parsed.toFixed(1) : trimmed;
 };
 
 export const QobuzSearchPage: React.FC = () => {
@@ -78,17 +67,14 @@ export const QobuzSearchPage: React.FC = () => {
     qobuzSearchCache.selectedRegion = value;
     setSelectedRegion(value);
   };
-
   const updateQuery = (value: string) => {
     qobuzSearchCache.query = value;
     setQuery(value);
   };
-
   const updateSearchResult = (value: QobuzAlbumSearchResponse | null) => {
     qobuzSearchCache.searchResult = value;
     setSearchResult(value);
   };
-
   const updateSearchError = (value: string | null) => {
     qobuzSearchCache.searchError = value;
     setSearchError(value);
@@ -101,7 +87,7 @@ export const QobuzSearchPage: React.FC = () => {
       const data = await apiClient.getQobuzRegions();
       setRegions(data);
       if (data.length > 0) {
-        const defaultReg = data.find(r => r.code === "jp-ja") || data[0];
+        const defaultReg = data.find((r) => r.code === "jp-ja") || data[0];
         const cachedRegion = qobuzSearchCache.selectedRegion;
         const nextRegion = cachedRegion && data.some((region) => region.code === cachedRegion)
           ? cachedRegion
@@ -116,7 +102,6 @@ export const QobuzSearchPage: React.FC = () => {
     }
   }, []);
 
-  // Fetch regions on mount
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchRegions();
@@ -148,222 +133,130 @@ export const QobuzSearchPage: React.FC = () => {
       setPushNotice({ tone: "success", message: `已推送《${album.title}》到下载队列。` });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setPushNotice({ tone: "error", message: `推送失败：${message}` });
+      setPushNotice({ tone: "error", message: `推送失败:${message}` });
     } finally {
-      setPushingAlbumId((current) => current === album.id ? null : current);
+      setPushingAlbumId((current) => (current === album.id ? null : current));
     }
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        backgroundColor: "var(--bg-chat)",
-        padding: "24px",
-        overflowY: "auto",
-      }}
-      className="animate-fade-in"
-    >
-      {/* Header */}
-      <div style={{ marginBottom: "24px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px" }}>
-        <h1 style={{ fontSize: "1.2rem", fontWeight: "700", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px" }}>
-          <ShoppingBag size={20} style={{ color: "var(--accent-blue)" }} />
-          <span>Qobuz 商店专辑搜索</span>
-        </h1>
-        <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "6px", lineHeight: "1.4" }}>
-          搜索 Qobuz 各地区商店的专辑信息。选择地区并输入关键词即可查询，点击专辑可直接打开官方商店页面。
-        </p>
-      </div>
+    <div className="scrollbar-thin h-full overflow-y-auto bg-background">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 p-6 max-sm:p-4">
+        <PageHeader
+          icon={<ShoppingBag className="size-5" />}
+          title="Qobuz 商店专辑搜索"
+          description="搜索 Qobuz 各地区商店的专辑信息。选择地区并输入关键词即可查询,点击专辑可打开官方商店页面,或一键推送到下载队列。"
+        />
 
-      {/* Main search card */}
-      <div
-        style={{
-          backgroundColor: "var(--bg-sidebar)",
-          border: "1px solid var(--border-color)",
-          borderRadius: "8px",
-          padding: "20px",
-          marginBottom: "24px",
-        }}
-      >
-        {regionsLoading ? (
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-            <RefreshCw size={16} style={{ animation: "spin 1s linear infinite" }} />
-            <span>正在加载商店可用地区...</span>
-          </div>
-        ) : regionsError ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--accent-red)", fontSize: "0.85rem" }}>
-              <AlertCircle size={16} />
-              <span>{regionsError}</span>
+        {/* Search card */}
+        <div className="rounded-2xl border bg-card p-5">
+          {regionsLoading ? (
+            <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              <span>正在加载商店可用地区...</span>
             </div>
-            <button onClick={fetchRegions} className="btn-secondary" style={{ alignSelf: "flex-start", padding: "6px 12px", fontSize: "0.75rem" }}>
-              重试加载
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={handleSearch} style={{ display: "flex", gap: "12px", alignItems: "flex-end", flexWrap: "wrap" }}>
-            {/* Region select */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>商店地区</label>
-              <select
-                value={selectedRegion}
-                onChange={(e) => updateSelectedRegion(e.target.value)}
-                className="settings-input"
-                style={{
-                  width: "180px",
-                  height: "36px",
-                  fontSize: "0.85rem",
-                  cursor: "pointer",
-                  backgroundColor: "var(--bg-app)",
-                }}
-              >
-                {regions.map((r) => (
-                  <option key={r.code} value={r.code}>
-                    {REGION_CN_MAP[r.code] || `${r.label} (${r.country})`}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Keyword input */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, minWidth: "200px" }}>
-              <label style={{ fontSize: "0.75rem", fontWeight: "600", color: "var(--text-secondary)" }}>搜索关键词</label>
-              <div style={{ position: "relative" }}>
-                <Search
-                  size={16}
-                  style={{
-                    position: "absolute",
-                    left: "12px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    color: "var(--text-muted)",
-                  }}
-                />
-                <input
-                  type="text"
-                  placeholder="输入专辑名称、艺人..."
-                  value={query}
-                  onChange={(e) => updateQuery(e.target.value)}
-                  className="settings-input"
-                  style={{
-                    paddingLeft: "36px",
-                    fontSize: "0.85rem",
-                    height: "36px",
-                    backgroundColor: "var(--bg-app)",
-                  }}
-                />
+          ) : regionsError ? (
+            <div className="flex flex-col gap-2.5">
+              <div className="flex items-center gap-2 text-sm text-destructive">
+                <AlertCircle className="size-4" />
+                <span>{regionsError}</span>
               </div>
+              <Button variant="outline" size="sm" className="w-fit rounded-xl" onClick={fetchRegions}>
+                重试加载
+              </Button>
             </div>
+          ) : (
+            <form onSubmit={handleSearch} className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground">商店地区</Label>
+                <Select value={selectedRegion} onValueChange={updateSelectedRegion}>
+                  <SelectTrigger className="h-10 w-48 rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {regions.map((r) => (
+                      <SelectItem key={r.code} value={r.code}>
+                        {REGION_CN_MAP[r.code] || `${r.label} (${r.country})`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            {/* Search button */}
-            <button
-              type="submit"
-              disabled={searching || !query.trim()}
-              className="btn-primary"
-              style={{
-                height: "36px",
-                padding: "0 20px",
-                fontSize: "0.85rem",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-              }}
-            >
-              {searching ? (
-                <>
-                  <RefreshCw size={14} style={{ animation: "spin 1.5s linear infinite" }} />
-                  <span>搜索中...</span>
-                </>
-              ) : (
-                <>
-                  <Search size={14} />
-                  <span>搜索</span>
-                </>
-              )}
-            </button>
-          </form>
-        )}
-      </div>
+              <div className="flex min-w-52 flex-1 flex-col gap-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground">搜索关键词</Label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="text"
+                    placeholder="输入专辑名称、艺人..."
+                    value={query}
+                    onChange={(e) => updateQuery(e.target.value)}
+                    className="h-10 rounded-xl pl-9"
+                  />
+                </div>
+              </div>
 
-      {pushNotice && (
-        <div
-          style={{
-            marginBottom: "16px",
-            backgroundColor: pushNotice.tone === "success" ? "var(--accent-green-transparent)" : "var(--accent-red-transparent)",
-            border: `1px solid ${pushNotice.tone === "success" ? "var(--accent-green)" : "var(--accent-red)"}`,
-            color: pushNotice.tone === "success" ? "var(--accent-green)" : "var(--accent-red)",
-            borderRadius: "8px",
-            padding: "12px 14px",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            fontSize: "0.82rem",
-            fontWeight: 500,
-          }}
-        >
-          {pushNotice.tone === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-          <span>{pushNotice.message}</span>
+              <Button
+                type="submit"
+                disabled={searching || !query.trim()}
+                className="gradient-brand h-10 rounded-xl px-6 text-white hover:opacity-90"
+              >
+                {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+                {searching ? "搜索中..." : "搜索"}
+              </Button>
+            </form>
+          )}
         </div>
-      )}
 
-      {/* Results panel */}
-      <div style={{ flex: 1 }}>
+        {pushNotice && (
+          <div
+            className={cn(
+              "flex items-center gap-2.5 rounded-xl border px-4 py-3 text-sm font-medium",
+              pushNotice.tone === "success"
+                ? "border-[color-mix(in_srgb,var(--success)_30%,transparent)] bg-[var(--success-soft)] text-success"
+                : "border-[color-mix(in_srgb,var(--destructive)_30%,transparent)] bg-[var(--danger-soft)] text-destructive"
+            )}
+          >
+            {pushNotice.tone === "success" ? <CheckCircle2 className="size-4" /> : <AlertCircle className="size-4" />}
+            <span>{pushNotice.message}</span>
+          </div>
+        )}
+
+        {/* Results */}
         {searching && (
-          <div style={{ padding: "80px 0", textAlign: "center", color: "var(--text-muted)" }}>
-            <RefreshCw size={32} style={{ animation: "spin 1.5s linear infinite", opacity: 0.5, marginBottom: "16px" }} />
-            <div style={{ fontSize: "0.9rem" }}>正在请求 Qobuz 商店数据，请稍候...</div>
+          <div className="py-20 text-center text-muted-foreground">
+            <Loader2 className="mx-auto mb-4 size-8 animate-spin opacity-50" />
+            <div className="text-sm">正在请求 Qobuz 商店数据,请稍候...</div>
           </div>
         )}
 
         {searchError && (
-          <div
-            style={{
-              backgroundColor: "var(--accent-red-transparent)",
-              border: "1px solid var(--accent-red)",
-              color: "var(--accent-red)",
-              borderRadius: "8px",
-              padding: "16px",
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              fontSize: "0.85rem",
-            }}
-          >
-            <AlertCircle size={18} />
+          <div className="flex items-center gap-2.5 rounded-xl border border-[color-mix(in_srgb,var(--destructive)_30%,transparent)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-destructive">
+            <AlertCircle className="size-4" />
             <div>
-              <strong>搜索失败</strong>: {searchError}
+              <strong>搜索失败</strong>:{searchError}
             </div>
           </div>
         )}
 
         {!searching && !searchError && searchResult && (
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                找到 {searchResult.albums.length} 个专辑结果 • 数据源:{" "}
-                <a href={searchResult.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent-blue)" }}>
-                  Qobuz Store <ExternalLink size={10} style={{ display: "inline", verticalAlign: "middle" }} />
-                </a>
-              </span>
+          <div className="flex flex-col gap-4">
+            <div className="text-xs text-muted-foreground">
+              找到 {searchResult.albums.length} 个专辑结果 · 数据源:{" "}
+              <a href={searchResult.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-primary">
+                Qobuz Store <ExternalLink className="inline size-3 align-middle" />
+              </a>
             </div>
 
             {searchResult.albums.length === 0 ? (
-              <div style={{ padding: "80px 0", textAlign: "center", color: "var(--text-muted)", backgroundColor: "var(--bg-sidebar)", border: "1px solid var(--border-color)", borderRadius: "8px" }}>
-                <Disc size={36} style={{ opacity: 0.2, marginBottom: "12px" }} />
-                <div style={{ fontSize: "0.85rem" }}>未找到符合条件的专辑。</div>
-                <div style={{ fontSize: "0.75rem", marginTop: "4px" }}>请尝试更换其他地区或修改搜索关键词。</div>
+              <div className="rounded-2xl border bg-card py-20 text-center text-muted-foreground">
+                <Disc className="mx-auto mb-3 size-9 opacity-20" />
+                <div className="text-sm">未找到符合条件的专辑。</div>
+                <div className="mt-1 text-xs">请尝试更换其他地区或修改搜索关键词。</div>
               </div>
             ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-                  gap: "20px",
-                }}
-              >
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
                 {searchResult.albums.map((album) => {
                   const sampleRate = formatQobuzSampleRate(album.sampleRate);
                   const isPushing = pushingAlbumId === album.id;
@@ -374,194 +267,81 @@ export const QobuzSearchPage: React.FC = () => {
                       href={album.albumUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        backgroundColor: "var(--bg-sidebar)",
-                        border: "1px solid var(--border-color)",
-                        borderRadius: "8px",
-                        overflow: "hidden",
-                        textDecoration: "none",
-                        color: "inherit",
-                        transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
-                      }}
-                      className="qobuz-album-card"
+                      className="group flex flex-col overflow-hidden rounded-2xl border bg-card transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-float"
                     >
-                    {/* Cover image container */}
-                    <div style={{ position: "relative", width: "100%", paddingBottom: "100%", backgroundColor: "var(--bg-app)" }}>
-                      {album.coverUrl ? (
-                        <img
-                          src={album.coverUrl}
-                          alt={album.title}
-                          loading="lazy"
-                          style={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                          }}
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            width: "100%",
-                            height: "100%",
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            color: "var(--text-muted)",
-                            gap: "8px",
-                          }}
-                        >
-                          <Music size={24} style={{ opacity: 0.3 }} />
-                          <span style={{ fontSize: "0.7rem" }}>暂无封面</span>
+                      {/* Cover */}
+                      <div className="relative aspect-square w-full bg-muted">
+                        {album.coverUrl ? (
+                          <img
+                            src={album.coverUrl}
+                            alt={album.title}
+                            loading="lazy"
+                            className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
+                          />
+                        ) : (
+                          <div className="flex size-full flex-col items-center justify-center gap-2 text-muted-foreground">
+                            <Music className="size-6 opacity-30" />
+                            <span className="text-xs">暂无封面</span>
+                          </div>
+                        )}
+                        {album.quality && (
+                          <Badge className="glass-panel absolute bottom-2 right-2 rounded-full border-0 px-2 py-0.5 text-[10px] font-bold tracking-wider text-primary">
+                            {album.quality}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex flex-1 flex-col gap-1.5 p-3">
+                        <span className="line-clamp-2 text-sm font-semibold leading-snug" title={album.title}>
+                          {album.title}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground" title={album.artist}>
+                          {album.artist || "未知艺人"}
+                        </span>
+
+                        <div className="mt-0.5 flex flex-col gap-0.5 text-[11px] text-muted-foreground">
+                          {album.releaseDateDisplay && <span>发布: {album.releaseDateDisplay}</span>}
+                          {album.trackCount && <span>曲目: {album.trackCount} 首</span>}
+                          {(album.bitDepth || sampleRate) && (
+                            <span className="font-medium text-primary">
+                              {album.bitDepth && `${album.bitDepth} Bit`}
+                              {album.bitDepth && sampleRate && " / "}
+                              {sampleRate && `${sampleRate} kHz`}
+                            </span>
+                          )}
                         </div>
-                      )}
 
-                      {/* Quality Badge */}
-                      {album.quality && (
-                        <span
-                          style={{
-                            position: "absolute",
-                            bottom: "8px",
-                            right: "8px",
-                            backgroundColor: "rgba(15, 23, 42, 0.85)",
-                            backdropFilter: "blur(4px)",
-                            color: "#60a5fa",
-                            fontSize: "0.6rem",
-                            fontWeight: "bold",
-                            padding: "2px 6px",
-                            borderRadius: "4px",
-                            border: "1px solid rgba(59, 130, 246, 0.3)",
-                            letterSpacing: "0.05em",
+                        <div className="mt-auto flex items-center justify-between border-t pt-2 text-[11px] text-muted-foreground">
+                          <span>{album.genre || ""}</span>
+                          {album.price && (
+                            <span className="text-xs font-semibold text-foreground">
+                              {album.currency || ""}
+                              {album.price}
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={Boolean(pushingAlbumId)}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void handlePushDownload(album);
                           }}
+                          className={cn(
+                            "mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-primary/20 bg-primary/8 px-2.5 py-2 text-xs font-semibold text-primary transition-colors",
+                            "hover:bg-primary hover:text-primary-foreground",
+                            pushingAlbumId && !isPushing && "cursor-not-allowed opacity-55",
+                            isPushing && "cursor-wait"
+                          )}
                         >
-                          {album.quality}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Album Info */}
-                    <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: "6px", flex: 1 }}>
-                      <span
-                        style={{
-                          fontWeight: "600",
-                          fontSize: "0.8rem",
-                          color: "var(--text-primary)",
-                          lineHeight: "1.3",
-                          display: "block",
-                          overflowWrap: "anywhere",
-                        }}
-                        title={album.title}
-                      >
-                        {album.title}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "0.72rem",
-                          color: "var(--text-secondary)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                        title={album.artist}
-                      >
-                        {album.artist || "未知艺人"}
-                      </span>
-
-                      {/* Specs and Release Date */}
-                      <div
-                        style={{
-                          fontSize: "0.68rem",
-                          color: "var(--text-muted)",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: "2px",
-                          marginTop: "2px",
-                        }}
-                      >
-                        {album.releaseDateDisplay && (
-                          <div>
-                            <span>发布: {album.releaseDateDisplay}</span>
-                          </div>
-                        )}
-                        {album.trackCount && (
-                          <div>
-                            <span>曲目: {album.trackCount} 首</span>
-                          </div>
-                        )}
-                        {(album.bitDepth || sampleRate) && (
-                          <div style={{ color: "var(--accent-blue)", fontWeight: "500" }}>
-                            {album.bitDepth && <span>{album.bitDepth} Bit</span>}
-                            {album.bitDepth && sampleRate && <span> / </span>}
-                            {sampleRate && <span>{sampleRate} kHz</span>}
-                          </div>
-                        )}
+                          {isPushing ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
+                          <span>{isPushing ? "推送中..." : "一键推送"}</span>
+                        </button>
                       </div>
-
-                      {/* Metadata row */}
-                      <div
-                        style={{
-                          marginTop: "auto",
-                          paddingTop: "8px",
-                          borderTop: "1px solid var(--border-color)",
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          fontSize: "0.68rem",
-                          color: "var(--text-muted)",
-                        }}
-                      >
-                        <span>
-                          {album.genre ? album.genre : ""}
-                        </span>
-                        {album.price && (
-                          <span style={{ fontWeight: "600", color: "var(--text-primary)", fontSize: "0.72rem" }}>
-                            {album.currency || ""}{album.price}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Download Push Button */}
-                      <button
-                        type="button"
-                        disabled={Boolean(pushingAlbumId)}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void handlePushDownload(album);
-                        }}
-                        style={{
-                          marginTop: "8px",
-                          width: "100%",
-                          padding: "6px 10px",
-                          borderRadius: "6px",
-                          backgroundColor: isPushing ? "var(--accent-blue-transparent)" : "rgba(59, 130, 246, 0.08)",
-                          border: "1px solid rgba(59, 130, 246, 0.2)",
-                          color: "var(--accent-blue)",
-                          fontSize: "0.72rem",
-                          fontWeight: "600",
-                          cursor: pushingAlbumId ? "not-allowed" : "pointer",
-                          opacity: pushingAlbumId && !isPushing ? 0.55 : 1,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "6px",
-                          transition: "all 0.15s ease",
-                        }}
-                        className="push-download-btn"
-                      >
-                        {isPushing ? <RefreshCw size={12} style={{ animation: "spin 1.5s linear infinite" }} /> : <Download size={12} />}
-                        <span>{isPushing ? "推送中..." : "一键推送"}</span>
-                      </button>
-                    </div>
-                  </a>
+                    </a>
                   );
                 })}
               </div>
@@ -569,24 +349,6 @@ export const QobuzSearchPage: React.FC = () => {
           </div>
         )}
       </div>
-
-      {/* Hover effects inside component style */}
-      <style>{`
-        .qobuz-album-card:hover {
-          transform: translateY(-4px);
-          box-shadow: var(--shadow-lg);
-          border-color: var(--accent-blue) !important;
-        }
-        .push-download-btn:not(:disabled):hover {
-          background-color: var(--accent-blue) !important;
-          color: white !important;
-          border-color: var(--accent-blue) !important;
-        }
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 };

@@ -1,6 +1,26 @@
 import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
 import { List, X, RefreshCw, Check, SkipForward, Trash2, ChevronDown, ChevronUp, Disc } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+const Cover: React.FC<{ url?: string; title: string; size: number }> = ({ url, title, size }) =>
+  url ? (
+    <img
+      src={url}
+      alt={title}
+      className="shrink-0 rounded-lg border object-cover"
+      style={{ width: size, height: size }}
+    />
+  ) : (
+    <div
+      className="flex shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+      style={{ width: size, height: size }}
+    >
+      <Disc className="size-1/2" />
+    </div>
+  );
 
 export const DownloadQueueWidget: React.FC = () => {
   const {
@@ -16,347 +36,136 @@ export const DownloadQueueWidget: React.FC = () => {
   const queuedItems = downloadQueue.filter((item) => item.status === "queued");
   const completedItemsCount = downloadQueue.filter((item) => item.status === "completed").length;
   const failedItemsCount = downloadQueue.filter((item) => item.status === "failed").length;
+  const activeCount = queuedItems.length + (activeItem ? 1 : 0);
 
   if (downloadQueue.length === 0) {
     return null;
   }
 
   return (
-    <div
-      style={{
-        position: "relative",
-        display: "inline-block",
-        fontFamily: "Inter, system-ui, sans-serif",
-        marginLeft: "8px",
-      }}
-    >
-      {/* Expanded Panel */}
+    <div className="relative inline-block">
+      {/* Expanded panel */}
       {expanded && (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 8px)",
-            left: "0",
-            width: "360px",
-            maxHeight: "500px",
-            backgroundColor: "#ffffff",
-            backdropFilter: "blur(16px)",
-            border: "1px solid var(--border-color)",
-            borderRadius: "12px",
-            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.08)",
-            color: "var(--text-primary)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            zIndex: 1000,
-            animation: "slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
-          }}
-        >
+        <div className="message-entry glass-panel shadow-float absolute right-0 top-[calc(100%+10px)] z-50 flex max-h-[520px] w-[360px] flex-col overflow-hidden rounded-2xl max-sm:fixed max-sm:inset-x-2 max-sm:top-14 max-sm:w-auto">
           {/* Header */}
-          <div
-            style={{
-              padding: "10px 14px",
-              borderBottom: "1px solid var(--border-color)",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              backgroundColor: "rgba(241, 245, 249, 0.5)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <List size={16} style={{ color: "var(--accent-blue)" }} />
-              <span style={{ fontWeight: "600", fontSize: "0.85rem", color: "var(--text-primary)" }}>下载队列管理</span>
-              <span
-                style={{
-                  fontSize: "0.7rem",
-                  backgroundColor: "var(--accent-blue)",
-                  color: "white",
-                  padding: "1px 6px",
-                  borderRadius: "10px",
-                  fontWeight: "bold",
-                }}
-              >
-                {queuedItems.length + (activeItem ? 1 : 0)}
-              </span>
+          <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-3.5 py-2.5">
+            <div className="flex items-center gap-2">
+              <List className="size-4 text-primary" />
+              <span className="text-sm font-semibold">下载队列管理</span>
+              <Badge className="h-5 min-w-5 justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground">
+                {activeCount}
+              </Badge>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <button
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={clearDownloadQueue}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-muted)",
-                  fontSize: "0.75rem",
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  borderRadius: "4px",
-                  transition: "all 0.15s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = "#ef4444";
-                  e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.05)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.backgroundColor = "transparent";
-                }}
+                className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               >
                 清空队列
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => setExpanded(false)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  display: "flex",
-                  padding: "2px",
-                  borderRadius: "4px",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
+                className="size-7 rounded-lg text-muted-foreground hover:text-foreground"
               >
-                <X size={16} />
-              </button>
+                <X className="size-4" />
+              </Button>
             </div>
           </div>
 
-          {/* Body Content */}
-          <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
-            {/* Active Item Details */}
+          {/* Body */}
+          <div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            {/* Active item */}
             {activeItem ? (
-              <div
-                style={{
-                  backgroundColor: "rgba(59, 130, 246, 0.03)",
-                  border: "1px solid rgba(59, 130, 246, 0.15)",
-                  borderRadius: "8px",
-                  padding: "12px",
-                }}
-              >
-                <div style={{ display: "flex", gap: "12px", marginBottom: "12px" }}>
-                  {activeItem.coverUrl ? (
-                    <img
-                      src={activeItem.coverUrl}
-                      alt={activeItem.title}
-                      style={{ width: "48px", height: "48px", borderRadius: "6px", objectFit: "cover", border: "1px solid var(--border-color)" }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: "48px",
-                        height: "48px",
-                        borderRadius: "6px",
-                        backgroundColor: "var(--bg-app)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Disc size={20} style={{ color: "var(--text-muted)" }} />
-                    </div>
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "0.82rem", fontWeight: "600", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {activeItem.title}
-                    </div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: "2px" }}>
-                      {activeItem.artist}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px" }}>
-                      <RefreshCw size={10} style={{ animation: "spin 1.5s linear infinite", color: "var(--accent-blue)" }} />
-                      <span style={{ fontSize: "0.68rem", color: "var(--accent-blue)", fontWeight: "500" }}>正在下载推送任务...</span>
+              <div className="rounded-xl border border-primary/25 bg-primary/5 p-3">
+                <div className="mb-3 flex gap-3">
+                  <Cover url={activeItem.coverUrl} title={activeItem.title} size={48} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold">{activeItem.title}</div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">{activeItem.artist}</div>
+                    <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-medium text-primary">
+                      <RefreshCw className="size-3 animate-spin" />
+                      <span>正在下载推送任务...</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Log Console */}
-                <div
-                  style={{
-                    backgroundColor: "var(--bg-app)",
-                    border: "1px solid var(--border-color)",
-                    borderRadius: "6px",
-                    padding: "8px",
-                    height: "80px",
-                    overflowY: "auto",
-                    fontFamily: "monospace",
-                    fontSize: "0.68rem",
-                    color: "var(--text-secondary)",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "4px",
-                  }}
-                >
+                {/* Log console */}
+                <div className="scrollbar-thin flex h-20 flex-col gap-1 overflow-y-auto rounded-lg border bg-background/70 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground dark:bg-background/40">
                   {activeItem.logs.length === 0 ? (
-                    <span style={{ color: "#475569" }}>等待机器人响应...</span>
+                    <span className="opacity-70">等待机器人响应...</span>
                   ) : (
                     activeItem.logs.map((log, index) => (
-                      <div key={index} style={{ wordBreak: "break-all", lineHeight: "1.3" }}>
-                        <span style={{ color: "#3b82f6" }}>&gt;</span> {log}
+                      <div key={index} className="break-all">
+                        <span className="text-primary">&gt;</span> {log}
                       </div>
                     ))
                   )}
                 </div>
 
                 {/* Actions */}
-                <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                <div className="mt-3 flex gap-2">
                   <button
+                    type="button"
                     onClick={() => markDownloadQueueItemComplete(activeItem.id)}
-                    style={{
-                      flex: 1,
-                      backgroundColor: "rgba(16, 185, 129, 0.2)",
-                      border: "1px solid rgba(16, 185, 129, 0.4)",
-                      borderRadius: "6px",
-                      color: "#34d399",
-                      padding: "6px 0",
-                      fontSize: "0.75rem",
-                      fontWeight: "600",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "6px",
-                      transition: "all 0.2s",
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "rgba(16, 185, 129, 0.3)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "rgba(16, 185, 129, 0.2)")}
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[color-mix(in_srgb,var(--success)_35%,transparent)] bg-[var(--success-soft)] py-1.5 text-xs font-semibold text-success transition-all hover:brightness-95 active:scale-[0.98]"
                   >
-                    <Check size={12} />
+                    <Check className="size-3.5" />
                     标记完成
                   </button>
                   <button
+                    type="button"
                     onClick={() => skipDownloadQueueItem(activeItem.id)}
-                    style={{
-                      flex: 1,
-                      backgroundColor: "rgba(245, 158, 11, 0.15)",
-                      border: "1px solid rgba(245, 158, 11, 0.3)",
-                      borderRadius: "6px",
-                      color: "#fbbf24",
-                      padding: "6px 0",
-                      fontSize: "0.75rem",
-                      fontWeight: "600",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "6px",
-                      transition: "all 0.2s",
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "rgba(245, 158, 11, 0.25)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "rgba(245, 158, 11, 0.15)")}
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[color-mix(in_srgb,var(--warning)_35%,transparent)] bg-[var(--warning-soft)] py-1.5 text-xs font-semibold text-warning transition-all hover:brightness-95 active:scale-[0.98]"
                   >
-                    <SkipForward size={12} />
+                    <SkipForward className="size-3.5" />
                     跳过任务
                   </button>
                 </div>
               </div>
             ) : (
-              <div
-                style={{
-                  padding: "24px 0",
-                  textAlign: "center",
-                  color: "var(--text-muted)",
-                  fontSize: "0.8rem",
-                  border: "1px dashed var(--border-color)",
-                  borderRadius: "8px",
-                }}
-              >
+              <div className="rounded-xl border border-dashed py-6 text-center text-sm text-muted-foreground">
                 没有正在下载的任务
               </div>
             )}
 
-            {/* Upcoming Queue List */}
+            {/* Queue */}
             {queuedItems.length > 0 && (
               <div>
-                <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
+                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   等候中 ({queuedItems.length})
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px", maxHeight: "150px", overflowY: "auto" }}>
+                <div className="scrollbar-thin flex max-h-40 flex-col gap-1.5 overflow-y-auto">
                   {queuedItems.map((item, index) => (
-                    <div
-                      key={item.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        padding: "6px",
-                        backgroundColor: "var(--bg-app)",
-                        border: "1px solid var(--border-color)",
-                        borderRadius: "6px",
-                      }}
-                    >
-                      <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: "bold", width: "16px", textAlign: "center" }}>
+                    <div key={item.id} className="flex items-center gap-2.5 rounded-lg border bg-card/60 p-1.5">
+                      <span className="w-4 shrink-0 text-center text-[11px] font-bold text-muted-foreground">
                         {index + 1}
                       </span>
-                      {item.coverUrl ? (
-                        <img
-                          src={item.coverUrl}
-                          alt={item.title}
-                          style={{ width: "28px", height: "28px", borderRadius: "4px", objectFit: "cover" }}
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            width: "28px",
-                            height: "28px",
-                            borderRadius: "4px",
-                            backgroundColor: "var(--bg-app)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Disc size={12} style={{ color: "var(--text-muted)" }} />
-                        </div>
-                      )}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: "0.75rem", fontWeight: "500", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {item.title}
-                        </div>
-                        <div style={{ fontSize: "0.68rem", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {item.artist}
-                        </div>
+                      <Cover url={item.coverUrl} title={item.title} size={28} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-medium">{item.title}</div>
+                        <div className="truncate text-[11px] text-muted-foreground">{item.artist}</div>
                       </div>
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => skipDownloadQueueItem(item.id)}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: "var(--text-muted)",
-                          cursor: "pointer",
-                          padding: "4px",
-                          borderRadius: "4px",
-                          display: "flex",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.color = "#ef4444";
-                          e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.05)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.color = "var(--text-muted)";
-                          e.currentTarget.style.backgroundColor = "transparent";
-                        }}
+                        className="size-7 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                         title="取消下载"
                       >
-                        <Trash2 size={12} />
-                      </button>
+                        <Trash2 className="size-3" />
+                      </Button>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Status Footer Metrics */}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: "0.68rem",
-                color: "var(--text-muted)",
-                borderTop: "1px solid var(--border-color)",
-                paddingTop: "10px",
-              }}
-            >
+            {/* Footer stats */}
+            <div className="flex shrink-0 justify-between border-t border-border/60 pt-2.5 text-[11px] text-muted-foreground">
               <span>已完成: {completedItemsCount}</span>
               <span>失败/跳过: {failedItemsCount}</span>
             </div>
@@ -364,91 +173,28 @@ export const DownloadQueueWidget: React.FC = () => {
         </div>
       )}
 
-      {/* Floating Toggle Button */}
+      {/* Trigger chip */}
       <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
-        style={{
-          height: "26px",
-          padding: "0 10px",
-          borderRadius: "6px",
-          backgroundColor: activeItem ? "var(--accent-blue-transparent)" : "var(--bg-app)",
-          border: activeItem ? "1px solid rgba(59, 130, 246, 0.3)" : "1px solid var(--border-color)",
-          color: activeItem ? "var(--accent-blue)" : "var(--text-secondary)",
-          cursor: "pointer",
-          boxShadow: "none",
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
-          position: "relative",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = "scale(1.02)";
-          if (!activeItem) {
-            e.currentTarget.style.backgroundColor = "rgba(0, 0, 0, 0.03)";
-            e.currentTarget.style.color = "var(--text-primary)";
-          }
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = "scale(1)";
-          if (!activeItem) {
-            e.currentTarget.style.backgroundColor = "var(--bg-app)";
-            e.currentTarget.style.color = "var(--text-secondary)";
-          }
-        }}
-      >
-        {activeItem ? (
-          <RefreshCw size={12} style={{ animation: "spin 2s linear infinite" }} />
-        ) : (
-          <List size={12} />
+        className={cn(
+          "relative inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-semibold transition-all hover:scale-[1.02] active:scale-100",
+          activeItem
+            ? "border-primary/30 bg-primary/10 text-primary"
+            : "bg-background/60 text-muted-foreground hover:text-foreground"
         )}
-        <span style={{ fontSize: "0.75rem", fontWeight: "600" }}>
-          {activeItem ? `正在下载 (${queuedItems.length + 1})` : `下载队列 (${queuedItems.length})`}
-        </span>
-        {expanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+      >
+        {activeItem ? <RefreshCw className="size-3 animate-spin" /> : <List className="size-3" />}
+        <span className="max-sm:hidden">{activeItem ? `正在下载 (${activeCount})` : `下载队列 (${queuedItems.length})`}</span>
+        <span className="sm:hidden">{activeCount}</span>
+        {expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
 
-        {/* Counter Badge */}
         {queuedItems.length > 0 && !expanded && (
-          <span
-            style={{
-              position: "absolute",
-              top: "-6px",
-              right: "-6px",
-              backgroundColor: "#ef4444",
-              color: "white",
-              fontSize: "0.6rem",
-              fontWeight: "bold",
-              borderRadius: "50%",
-              width: "16px",
-              height: "16px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "1.5px solid var(--bg-sidebar)",
-            }}
-          >
-            {queuedItems.length + (activeItem ? 1 : 0)}
+          <span className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white ring-2 ring-card">
+            {activeCount}
           </span>
         )}
       </button>
-
-      {/* Slideup keyframes */}
-      <style>{`
-        @keyframes slideUp {
-          from {
-            opacity: 0;
-            transform: translateY(12px) scale(0.98);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 };

@@ -1,138 +1,74 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { MessageInspector } from "./MessageInspector";
+import { EventLogPanel } from "./EventLogPanel";
 import { useApp } from "../context/AppContext";
-import { Menu, X } from "lucide-react";
+import { Menu, Send } from "lucide-react";
 import { useLocation } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { selectedMessage } = useApp();
+  const { selectedMessage, settings } = useApp();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const location = useLocation();
 
-  // Close sidebar on navigation in mobile
+  // Close the mobile drawer whenever the route changes
   useEffect(() => {
-    if (mobileSidebarOpen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMobileSidebarOpen(false);
-    }
-  }, [location, mobileSidebarOpen]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMobileSidebarOpen(false);
+  }, [location]);
 
   return (
-    <div className="app-container">
-      {/* Mobile Header */}
-      <div
-        className="mobile-header"
-        style={{
-          display: "none",
-          height: "48px",
-          backgroundColor: "var(--bg-sidebar)",
-          borderBottom: "1px solid var(--border-color)",
-          alignItems: "center",
-          padding: "0 12px",
-          justifyContent: "space-between",
-          width: "100%",
-          position: "absolute",
-          top: 0,
-          zIndex: 20,
-        }}
-      >
-        <button
-          onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-          style={{ color: "var(--text-primary)", cursor: "pointer", display: "flex", alignItems: "center" }}
-        >
-          {mobileSidebarOpen ? <X size={20} /> : <Menu size={20} />}
-        </button>
-        <span style={{ fontSize: "0.85rem", fontWeight: "bold" }}>TG Web Relay Portal</span>
-        <div style={{ width: "20px" }} />
-      </div>
-
-      {/* Sidebar Wrapper */}
-      <div className={`sidebar-wrapper ${mobileSidebarOpen ? "open" : ""}`}>
+    <div className="flex h-svh w-full gap-2 bg-background p-2 max-md:gap-0 max-md:p-0">
+      {/* Desktop sidebar island */}
+      <aside className="hidden w-[300px] shrink-0 flex-col overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar md:flex">
         <Sidebar />
-      </div>
+      </aside>
 
-      {/* Main Panel Wrapper */}
-      <div
-        className="main-panel-wrapper"
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          flex: 1,
-          height: "100%",
-          overflow: "hidden",
-        }}
-      >
-        <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
-          {/* Main Content Pane */}
-          <div style={{ flex: 1, height: "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            {children}
+      {/* Main column */}
+      <div className="flex min-w-0 flex-1 flex-col gap-2 max-md:gap-0">
+        {/* Mobile top bar */}
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-2 md:hidden">
+          <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-9 rounded-xl">
+                <Menu className="size-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="w-[300px] gap-0 border-sidebar-border bg-sidebar p-0">
+              <SheetTitle className="sr-only">导航侧栏</SheetTitle>
+              <Sidebar />
+            </SheetContent>
+          </Sheet>
+          <div className="gradient-brand flex size-7 items-center justify-center rounded-lg text-white">
+            <Send className="size-3.5" />
           </div>
+          <span className="font-serif text-sm font-semibold">TG Relay</span>
+        </header>
 
-          {/* Inspector Panel */}
+        {/* Content island */}
+        <main className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border bg-card max-md:rounded-none max-md:border-0">
+          <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+
+          {/* Inspector — docked on wide screens */}
           {selectedMessage && (
-            <div className="inspector-wrapper">
+            <div className="hidden w-[380px] shrink-0 border-l xl:flex">
               <MessageInspector />
             </div>
           )}
-        </div>
-      </div>
 
-      {/* Dynamic styles for layout responsiveness */}
-      <style>{`
-        .sidebar-wrapper {
-          display: block;
-          height: 100%;
-        }
-        .inspector-wrapper {
-          width: var(--inspector-width);
-          height: 100%;
-          flex-shrink: 0;
-        }
-        @media (max-width: 1024px) {
-          .inspector-wrapper {
-            position: absolute;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 320px;
-            z-index: 15;
-            box-shadow: -4px 0 12px rgba(0,0,0,0.15);
-            animation: slideInRight 0.2s ease-out;
-          }
-        }
-        @media (max-width: 768px) {
-          .mobile-header {
-            display: flex !important;
-          }
-          .sidebar-wrapper {
-            position: absolute;
-            left: 0;
-            top: 48px;
-            bottom: 0;
-            width: 280px;
-            z-index: 30;
-            transform: translateX(-100%);
-            transition: transform 0.2s ease-in-out;
-            box-shadow: 4px 0 12px rgba(0,0,0,0.5);
-          }
-          .sidebar-wrapper.open {
-            transform: translateX(0);
-          }
-          .main-panel-wrapper {
-            padding-top: 48px;
-          }
-          .inspector-wrapper {
-            position: absolute;
-            left: 0;
-            right: 0;
-            top: 48px;
-            bottom: 0;
-            width: 100%;
-            z-index: 25;
-          }
-        }
-      `}</style>
+          {/* Inspector — floating glass overlay on narrow screens */}
+          {selectedMessage && (
+            <div className="glass-panel shadow-float absolute inset-y-0 right-0 z-30 flex w-full max-w-[400px] xl:hidden">
+              <MessageInspector />
+            </div>
+          )}
+        </main>
+
+        {/* Developer event feed */}
+        {settings?.debugMode && <EventLogPanel />}
+      </div>
     </div>
   );
 };

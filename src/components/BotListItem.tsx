@@ -2,7 +2,10 @@ import React from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { BotSummary } from "../api/types";
 import { useApp } from "../context/AppContext";
-import { Pin, AlertOctagon } from "lucide-react";
+import { BotAvatar } from "./BotAvatar";
+import { Badge } from "@/components/ui/badge";
+import { Pin, ShieldAlert } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface BotListItemProps {
   bot: BotSummary;
@@ -14,123 +17,49 @@ export const BotListItem: React.FC<BotListItemProps> = ({ bot }) => {
   const location = useLocation();
 
   const isActive = activeBotId === bot.id;
-
-  const getAvatarColor = (id: string) => {
-    const colors = [
-      "#3b82f6", // blue
-      "#10b981", // green
-      "#f59e0b", // yellow
-      "#ef4444", // red
-      "#8b5cf6", // purple
-    ];
-    // Hash ID to get a color index
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) {
-      hash = id.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return colors[Math.abs(hash) % colors.length];
-  };
-
-  const initials = bot.title
-    .split(" ")
-    .map((word) => word[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const isChatRoute = location.pathname === "/" || location.pathname.startsWith("/bots");
 
   return (
-    <div
+    <button
+      type="button"
       onClick={() => {
         selectBot(bot.id);
-        if (!location.pathname.startsWith("/bots") && location.pathname !== "/") {
-          navigate(`/bots/${bot.id}`);
-        }
+        if (!isChatRoute) navigate(`/bots/${bot.id}`);
       }}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "10px",
-        padding: "10px 12px",
-        cursor: "pointer",
-        borderRadius: "6px",
-        backgroundColor: isActive ? "rgba(59, 130, 246, 0.08)" : "transparent",
-        borderLeft: `3px solid ${isActive ? "var(--accent-blue)" : "transparent"}`,
-        transition: "background-color 0.15s, border-left-color 0.15s",
-        position: "relative",
-      }}
-      onMouseEnter={(e) => {
-        if (!isActive) e.currentTarget.style.backgroundColor = "var(--bg-app)";
-      }}
-      onMouseLeave={(e) => {
-        if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
-      }}
+      className={cn(
+        "group flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-all duration-150",
+        isActive
+          ? "bg-card shadow-sm ring-1 ring-border"
+          : "hover:bg-sidebar-accent active:scale-[0.99]"
+      )}
     >
-      {/* Avatar */}
-      <div
-        style={{
-          width: "36px",
-          height: "36px",
-          borderRadius: "50%",
-          backgroundColor: getAvatarColor(bot.id),
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontWeight: "bold",
-          fontSize: "0.85rem",
-          color: "white",
-          flexShrink: 0,
-        }}
-      >
-        {initials}
-      </div>
+      <BotAvatar id={bot.id} title={bot.title} size={40} />
 
-      {/* Details */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "2px" }}>
-          <span style={{ fontSize: "0.85rem", fontWeight: "600", color: isActive ? "var(--accent-blue)" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "truncate text-sm font-medium",
+              isActive ? "text-foreground" : "text-sidebar-foreground"
+            )}
+          >
             {bot.title}
           </span>
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-            {bot.isPinned && <Pin size={10} style={{ color: "var(--text-muted)", transform: "rotate(45deg)" }} />}
-            {bot.status === "restricted" && (
-              <span title="Restricted Bot" style={{ color: "var(--accent-red)", display: "inline-flex" }}>
-                <AlertOctagon size={11} />
-              </span>
-            )}
-          </div>
+          {bot.isPinned && <Pin className="size-3 shrink-0 rotate-45 text-muted-foreground" />}
+          {bot.status === "restricted" && (
+            <ShieldAlert className="size-3.5 shrink-0 text-destructive" aria-label="Restricted bot" />
+          )}
         </div>
-        <div
-          style={{
-            fontSize: "0.75rem",
-            color: "var(--text-muted)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          @{bot.username || "unknown_bot"}
+        <div className="mt-0.5 truncate text-xs text-muted-foreground">
+          {bot.lastMessagePreview || `@${bot.username || "unknown_bot"}`}
         </div>
       </div>
 
-      {/* Unread Count Badge */}
       {bot.unreadCount > 0 && (
-        <span
-          style={{
-            backgroundColor: "var(--accent-blue)",
-            color: "white",
-            fontSize: "0.65rem",
-            fontWeight: "bold",
-            padding: "2px 6px",
-            borderRadius: "10px",
-            minWidth: "18px",
-            textAlign: "center",
-            display: "inline-block",
-            flexShrink: 0,
-          }}
-        >
-          {bot.unreadCount}
-        </span>
+        <Badge className="h-5 min-w-5 shrink-0 justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground">
+          {bot.unreadCount > 99 ? "99+" : bot.unreadCount}
+        </Badge>
       )}
-    </div>
+    </button>
   );
 };

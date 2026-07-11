@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "magicpath": {
+      "source": "magicpathai/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/magicpath/SKILL.md",
+      "computedHash": "9b69ca6c0ef2cb0f9e71c35b8b923eb109ea1e72f9123e2f3be23880b8726d4c"
+    }
+  }
+}

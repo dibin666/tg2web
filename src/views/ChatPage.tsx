@@ -3,8 +3,17 @@ import { useApp } from "../context/AppContext";
 import { MessageBubble } from "../components/MessageBubble";
 import { PendingDraftBubble } from "../components/PendingDraftBubble";
 import { MessageComposer } from "../components/MessageComposer";
-import { Bot } from "lucide-react";
 import { DownloadQueueWidget } from "../components/DownloadQueueWidget";
+import { BotAvatar } from "../components/BotAvatar";
+import { Badge } from "@/components/ui/badge";
+import { Bot } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const BOT_STATUS_META: Record<string, { label: string; className: string }> = {
+  available: { label: "在线", className: "bg-[var(--success-soft)] text-success border-transparent" },
+  restricted: { label: "受限", className: "bg-[var(--danger-soft)] text-destructive border-transparent" },
+  unknown: { label: "未知", className: "bg-muted text-muted-foreground border-transparent" },
+};
 
 export const ChatPage: React.FC = () => {
   const { bots, activeBotId, messages, pendingDrafts, loading } = useApp();
@@ -36,16 +45,17 @@ export const ChatPage: React.FC = () => {
     });
   }, []);
 
-  // Auto Scroll to Bottom on bot switch, new message, media load, or new draft.
+  // Auto scroll on bot switch, new message, media load, or new draft.
   useEffect(() => {
     scrollToBottom("auto");
   }, [activeBotId, messages.length, pendingDrafts.length, scrollToBottom]);
 
   if (loading) {
     return (
-      <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "var(--bg-chat)", color: "var(--text-muted)" }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-          <div className="animate-pulse-slow" style={{ fontSize: "0.85rem" }}>Loading portal communications...</div>
+      <div className="flex flex-1 items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <div className="gradient-brand size-9 animate-pulse rounded-2xl" />
+          <span className="text-sm">正在加载会话数据...</span>
         </div>
       </div>
     );
@@ -53,132 +63,75 @@ export const ChatPage: React.FC = () => {
 
   if (!activeBotId || !activeBot) {
     return (
-      <div
-        style={{
-          display: "flex",
-          flex: 1,
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "var(--bg-chat)",
-          color: "var(--text-muted)",
-          padding: "24px",
-          textAlign: "center",
-        }}
-      >
-        <Bot size={48} style={{ marginBottom: "16px", opacity: 0.3 }} />
-        <h3 style={{ color: "var(--text-secondary)", marginBottom: "6px" }}>No Conversation Selected</h3>
-        <p style={{ fontSize: "0.8rem", maxWidth: "320px", lineHeight: "1.5" }}>
-          Select a published bot from the left sidebar to inspect the shared Telegram conversation.
+      <div className="flex flex-1 flex-col items-center justify-center gap-1 bg-background p-6 text-center">
+        <div className="mb-3 flex size-14 items-center justify-center rounded-2xl bg-muted">
+          <Bot className="size-7 text-muted-foreground/60" />
+        </div>
+        <h3 className="text-base font-semibold text-foreground">尚未选择会话</h3>
+        <p className="max-w-xs text-sm leading-relaxed text-muted-foreground">
+          从左侧列表选择一个已发布的机器人,即可查看共享 Telegram 会话。
         </p>
       </div>
     );
   }
 
+  const statusMeta = BOT_STATUS_META[activeBot.status] || BOT_STATUS_META.unknown;
+
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        backgroundColor: "var(--bg-chat)",
-      }}
-    >
-      {/* Bot Chat Header */}
-      <div
-        className="chat-header"
-        style={{
-          padding: "12px 20px",
-          borderBottom: "1px solid var(--border-color)",
-          backgroundColor: "var(--bg-sidebar)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div className="chat-header-info">
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <h1 style={{ fontSize: "0.95rem", fontWeight: "700", color: "var(--text-primary)" }}>
-              {activeBot.title}
-            </h1>
-            <span
-              style={{
-                fontSize: "0.7rem",
-                padding: "2px 6px",
-                borderRadius: "4px",
-                backgroundColor:
-                  activeBot.status === "available"
-                    ? "var(--accent-green-transparent)"
-                    : "var(--accent-red-transparent)",
-                color:
-                  activeBot.status === "available"
-                    ? "var(--accent-green)"
-                    : "var(--accent-red)",
-                fontWeight: "bold",
-              }}
-            >
-              {activeBot.status}
-            </span>
-            <DownloadQueueWidget />
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Chat header */}
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-card px-4">
+        <BotAvatar id={activeBot.id} title={activeBot.title} size={36} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h1 className="truncate font-sans text-sm font-semibold tracking-normal">{activeBot.title}</h1>
+            <Badge className={cn("h-5 rounded-full px-2 text-[10px] font-semibold", statusMeta.className)}>
+              {statusMeta.label}
+            </Badge>
           </div>
-          <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-            @{activeBot.username || "unknown_bot"} • Shared Telegram Chat
-          </span>
+          <div className="truncate text-xs text-muted-foreground">
+            @{activeBot.username || "unknown_bot"}
+            <span className="max-sm:hidden">
+              {" · "}
+              <code className="font-mono text-[11px]">{activeBot.telegramChatId}</code>
+            </span>
+          </div>
         </div>
+        <DownloadQueueWidget />
+      </header>
 
-        {/* Small header details */}
-        <div className="chat-header-details" style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "12px" }}>
-          <span>Telegram Chat ID: <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{activeBot.telegramChatId}</code></span>
-        </div>
-      </div>
-
-      {/* Messages Thread Container */}
+      {/* Message thread on cream canvas */}
       <div
         ref={containerRef}
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "10px 14px",
-          display: "flex",
-          flexDirection: "column",
-          overflowAnchor: "none",
-        }}
+        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto bg-background px-4 py-4"
+        style={{ overflowAnchor: "none" }}
       >
-        {messages.length === 0 && pendingDrafts.length === 0 ? (
-          <div
-            style={{
-              margin: "auto",
-              padding: "48px 24px",
-              textAlign: "center",
-              color: "var(--text-muted)",
-              maxWidth: "400px",
-            }}
-          >
-            <Bot size={36} style={{ opacity: 0.2, marginBottom: "12px" }} />
-            <h4 style={{ color: "var(--text-secondary)", fontSize: "0.85rem", fontWeight: "600", marginBottom: "4px" }}>
-              Beginning of Conversation
-            </h4>
-            <p style={{ fontSize: "0.75rem", lineHeight: "1.4" }}>
-              This conversation history is currently empty. New Telegram messages will appear here as they arrive.
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* Historical and active messages */}
-            {messages.map((msg) => {
-              const isNew = mountTime > 0 && new Date(msg.createdAt).getTime() > mountTime - 1000;
-              return <MessageBubble key={msg.id} message={msg} isNew={isNew} />;
-            })}
-
-            {/* Live Streaming Draft Bubble */}
-            {pendingDrafts.map((draft) => (
-              <PendingDraftBubble key={draft.id} draft={draft} />
-            ))}
-          </>
-        )}
+        <div className="mx-auto flex w-full max-w-3xl flex-col">
+          {messages.length === 0 && pendingDrafts.length === 0 ? (
+            <div className="m-auto flex flex-col items-center px-6 py-16 text-center">
+              <div className="mb-3 flex size-12 items-center justify-center rounded-2xl bg-muted">
+                <Bot className="size-6 text-muted-foreground/50" />
+              </div>
+              <h4 className="text-sm font-semibold text-foreground">会话的开始</h4>
+              <p className="mt-1 max-w-xs text-xs leading-relaxed text-muted-foreground">
+                当前会话还没有历史消息,新的 Telegram 消息到达后会实时显示在这里。
+              </p>
+            </div>
+          ) : (
+            <>
+              {messages.map((msg) => {
+                const isNew = mountTime > 0 && new Date(msg.createdAt).getTime() > mountTime - 1000;
+                return <MessageBubble key={msg.id} message={msg} isNew={isNew} />;
+              })}
+              {pendingDrafts.map((draft) => (
+                <PendingDraftBubble key={draft.id} draft={draft} />
+              ))}
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Composer Input */}
+      {/* Composer */}
       <MessageComposer key={activeBotId || "none"} />
     </div>
   );

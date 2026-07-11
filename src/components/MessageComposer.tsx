@@ -2,7 +2,9 @@ import React, { useState, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import { apiClient } from "../api/client";
 import { BotCommand } from "../api/types";
-import { Send, Paperclip, Terminal, AlertOctagon } from "lucide-react";
+import { Send, Paperclip, Terminal, AlertOctagon, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export const MessageComposer: React.FC = () => {
   const { sendMessage, connectionStatus, bots, activeBotId, t } = useApp();
@@ -63,6 +65,13 @@ export const MessageComposer: React.FC = () => {
     void requestCommands(activeBotId, commandsBotId !== activeBotId);
   }, [activeBotId, commandsBotId, requestCommands]);
 
+  const autoGrow = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isDisabled) return;
@@ -70,6 +79,7 @@ export const MessageComposer: React.FC = () => {
     try {
       await sendMessage(text.trim());
       setText("");
+      requestAnimationFrame(autoGrow);
       inputRef.current?.focus();
     } catch (err) {
       console.error("Composer send failed", err);
@@ -81,12 +91,16 @@ export const MessageComposer: React.FC = () => {
       e.preventDefault();
       handleSend(e);
     }
+    if (e.key === "Escape") {
+      setShowCommands(false);
+    }
   };
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setText(val);
-    // Show bot commands popup if text starts with '/' or ends with '/'
+    autoGrow();
+    // Show bot commands popup if text starts with '/' or ends with ' /'
     if (val === "/" || val.endsWith(" /")) {
       setShowCommands(true);
       loadCommands();
@@ -108,148 +122,67 @@ export const MessageComposer: React.FC = () => {
 
   if (isRestricted) {
     return (
-      <div
-        style={{
-          borderTop: "1px solid var(--border-color)",
-          backgroundColor: "rgba(239, 68, 68, 0.03)",
-          padding: "16px",
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          color: "var(--accent-red)",
-          fontSize: "0.8rem",
-        }}
-      >
-        <AlertOctagon size={18} />
-        <div>
-          {t("restrictedChat")}
-        </div>
+      <div className="flex shrink-0 items-center gap-3 border-t bg-[var(--danger-soft)] px-5 py-4 text-sm text-destructive">
+        <AlertOctagon className="size-4 shrink-0" />
+        <span>{t("restrictedChat")}</span>
       </div>
     );
   }
 
   return (
-    <form
-      onSubmit={handleSend}
-      style={{
-        borderTop: "1px solid var(--border-color)",
-        backgroundColor: "var(--bg-sidebar)",
-        padding: "12px",
-        position: "relative",
-      }}
-    >
-      {/* Bot command autocomplete list (White Theme) */}
-      {showCommands && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: "100%",
-            left: "12px",
-            right: "12px",
-            backgroundColor: "var(--bg-panel)",
-            border: "1px solid var(--border-color)",
-            borderRadius: "8px",
-            boxShadow: "0 -4px 16px rgba(0, 0, 0, 0.06)",
-            zIndex: 10,
-            overflow: "hidden",
-            marginBottom: "8px",
-          }}
-          className="animate-slide-up"
-        >
-          <div
-            style={{
-              padding: "8px 12px",
-              fontSize: "0.7rem",
-              color: "var(--text-muted)",
-              borderBottom: "1px solid var(--border-color)",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              fontWeight: "600",
-              letterSpacing: "0.02em",
-            }}
-          >
-            <Terminal size={12} />
-            <span>{t("availableCommands")}</span>
+    <form onSubmit={handleSend} className="relative shrink-0 border-t bg-card px-4 py-3">
+      <div className="relative mx-auto w-full max-w-3xl">
+        {/* Slash command panel */}
+        {showCommands && (
+          <div className="message-entry glass-panel shadow-float absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl">
+            <div className="flex items-center gap-2 border-b border-border/60 px-3.5 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
+              <Terminal className="size-3" />
+              <span>{t("availableCommands")}</span>
+              {commandsLoading && <Loader2 className="size-3 animate-spin" />}
+            </div>
+            <div className="max-h-56 overflow-y-auto">
+              {commandsLoading && visibleCommands.length === 0 && (
+                <div className="px-3.5 py-2.5 text-sm text-muted-foreground">{t("commandsLoading")}</div>
+              )}
+              {!commandsLoading && visibleCommands.length === 0 && (
+                <div className="px-3.5 py-2.5 text-sm text-muted-foreground">{t("commandsEmpty")}</div>
+              )}
+              {visibleCommands.map((cmd) => {
+                const commandName = `/${cmd.command.replace(/^\//, "")}`;
+                return (
+                  <button
+                    type="button"
+                    key={commandName}
+                    onClick={() => insertCommand(commandName)}
+                    className="flex w-full items-center justify-between gap-3 px-3.5 py-2 text-left transition-colors hover:bg-accent"
+                  >
+                    <span className="font-mono text-sm font-semibold text-primary">{commandName}</span>
+                    <span className="truncate text-right text-xs text-muted-foreground">{cmd.description}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          {commandsLoading && visibleCommands.length === 0 && (
-            <div
-              style={{
-                padding: "10px 12px",
-                fontSize: "0.78rem",
-                color: "var(--text-secondary)",
-              }}
-            >
-              {t("commandsLoading")}
-            </div>
-          )}
-          {!commandsLoading && visibleCommands.length === 0 && (
-            <div
-              style={{
-                padding: "10px 12px",
-                fontSize: "0.78rem",
-                color: "var(--text-secondary)",
-              }}
-            >
-              {t("commandsEmpty")}
-            </div>
-          )}
-          {visibleCommands.map((cmd) => {
-            const commandName = `/${cmd.command.replace(/^\//, "")}`;
-            return (
-            <div
-              key={commandName}
-              onClick={() => insertCommand(commandName)}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "12px",
-                padding: "8px 12px",
-                fontSize: "0.8rem",
-                cursor: "pointer",
-                transition: "background-color 0.15s ease",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--bg-app)")}
-              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-            >
-              <span style={{ color: "var(--accent-blue)", fontFamily: "var(--font-mono)", fontWeight: "600" }}>
-                {commandName}
-              </span>
-              <span style={{ color: "var(--text-secondary)", fontSize: "0.75rem", textAlign: "right" }}>
-                {cmd.description}
-              </span>
-            </div>
-            );
-          })}
-        </div>
-      )}
+        )}
 
-      <div style={{ display: "flex", alignItems: "flex-end", gap: "10px" }}>
-        {/* Attachment Pin */}
-        <button
-          type="button"
-          disabled
-          style={{
-            padding: "8px",
-            borderRadius: "6px",
-            backgroundColor: "transparent",
-            border: "1px solid var(--border-color)",
-            color: "var(--text-muted)",
-            cursor: "not-allowed",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            height: "38px",
-            width: "38px",
-            transition: "all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1)",
-          }}
-          title={t("attachmentUnavailable")}
+        {/* Input shell */}
+        <div
+          className={cn(
+            "flex items-end gap-1.5 rounded-2xl border bg-background p-1.5 transition-shadow",
+            "focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/25"
+          )}
         >
-          <Paperclip size={18} />
-        </button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled
+            className="size-9 shrink-0 rounded-xl text-muted-foreground"
+            title={t("attachmentUnavailable")}
+          >
+            <Paperclip className="size-[18px]" />
+          </Button>
 
-        {/* Text Input (White Theme) */}
-        <div style={{ flex: 1, position: "relative" }}>
           <textarea
             ref={inputRef}
             rows={1}
@@ -257,55 +190,27 @@ export const MessageComposer: React.FC = () => {
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
             disabled={isOffline}
-            placeholder={
-              isOffline
-                ? "Disconnected..."
-                : t("typePrompt")
-            }
-            style={{
-              width: "100%",
-              backgroundColor: "var(--bg-app)",
-              border: "1px solid var(--border-color)",
-              borderRadius: "6px",
-              padding: "10px 12px",
-              color: "var(--text-primary)",
-              fontSize: "0.85rem",
-              resize: "none",
-              outline: "none",
-              fontFamily: "var(--font-sans)",
-              lineHeight: "1.4",
-              display: "block",
-              maxHeight: "150px",
-              overflowY: "auto",
-              transition: "border-color 0.2s cubic-bezier(0.25, 0.8, 0.25, 1)",
-            }}
-            onFocus={(e) => (e.target.style.borderColor = "var(--accent-blue)")}
-            onBlur={(e) => (e.target.style.borderColor = "var(--border-color)")}
+            placeholder={isOffline ? "连接已断开..." : t("typePrompt")}
+            className="max-h-40 min-h-9 flex-1 resize-none self-center bg-transparent px-1.5 py-2 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
           />
+
+          <Button
+            type="submit"
+            size="icon"
+            disabled={isDisabled}
+            className={cn(
+              "size-9 shrink-0 rounded-xl text-white shadow-sm transition-all",
+              isDisabled ? "bg-muted text-muted-foreground shadow-none" : "gradient-brand hover:opacity-90 active:scale-95"
+            )}
+            title={t("send")}
+          >
+            <Send className="size-4" />
+          </Button>
         </div>
 
-        {/* Send Button */}
-        <button
-          type="submit"
-          disabled={isDisabled}
-          style={{
-            height: "38px",
-            width: "38px",
-            backgroundColor: isDisabled ? "transparent" : "var(--accent-blue)",
-            color: isDisabled ? "var(--text-muted)" : "white",
-            borderRadius: "6px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: isDisabled ? "not-allowed" : "pointer",
-            border: `1px solid ${isDisabled ? "var(--border-color)" : "var(--accent-blue)"}`,
-            transition: "all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1)",
-          }}
-          onMouseEnter={(e) => !isDisabled && (e.currentTarget.style.backgroundColor = "var(--accent-blue-hover)")}
-          onMouseLeave={(e) => !isDisabled && (e.currentTarget.style.backgroundColor = "var(--accent-blue)")}
-        >
-          <Send size={16} />
-        </button>
+        <div className="mt-1.5 px-2 text-center text-[10px] text-muted-foreground/70 max-sm:hidden">
+          Enter 发送 · Shift + Enter 换行 · 输入 / 呼出机器人指令
+        </div>
       </div>
     </form>
   );

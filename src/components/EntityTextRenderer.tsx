@@ -14,7 +14,7 @@ export const EntityTextRenderer: React.FC<EntityTextRendererProps> = ({ text, en
 
   // 1. Collect all valid boundary points
   const boundarySet = new Set<number>([0, text.length]);
-  
+
   entities.forEach((ent) => {
     const start = ent.offsetUtf16;
     const end = ent.offsetUtf16 + ent.lengthUtf16;
@@ -65,13 +65,13 @@ function wrapEntity(node: React.ReactNode, entity: TelegramEntity, key: string):
       return <em key={key}>{node}</em>;
     case "underline":
       return (
-        <span key={key} className="telegram-underline" style={{ textDecoration: "underline" }}>
+        <span key={key} className="underline underline-offset-2">
           {node}
         </span>
       );
     case "strikethrough":
       return (
-        <span key={key} className="telegram-strikethrough" style={{ textDecoration: "line-through" }}>
+        <span key={key} className="line-through">
           {node}
         </span>
       );
@@ -79,7 +79,7 @@ function wrapEntity(node: React.ReactNode, entity: TelegramEntity, key: string):
       return <code key={key} className="telegram-code">{node}</code>;
     case "pre":
       return (
-        <pre key={key} className="telegram-pre" style={{ display: "inline-block", margin: 0 }}>
+        <pre key={key} className="telegram-pre">
           {entity.language ? <span className="pre-lang">{entity.language}</span> : null}
           <code>{node}</code>
         </pre>
@@ -92,13 +92,14 @@ function wrapEntity(node: React.ReactNode, entity: TelegramEntity, key: string):
           target="_blank"
           rel="noopener noreferrer"
           className="telegram-link"
+          onClick={(e) => e.stopPropagation()}
         >
           {node}
         </a>
       );
     case "mention":
       return (
-        <span key={key} className="telegram-mention" style={{ color: "var(--accent-blue)" }}>
+        <span key={key} className="telegram-mention">
           {node}
         </span>
       );

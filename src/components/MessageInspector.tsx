@@ -1,325 +1,202 @@
 import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
-import { X, Eye, Code, Calendar, User, Shield, Info, Database } from "lucide-react";
+import { X, Eye, Code, User, Shield, Database } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <section className="rounded-xl border bg-background/60 p-3 dark:bg-background/30">
+    <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</h4>
+    {children}
+  </section>
+);
+
+const KvRow: React.FC<{ label: string; children: React.ReactNode; mono?: boolean }> = ({ label, children, mono = true }) => (
+  <div className="flex items-baseline justify-between gap-3 py-0.5 text-xs">
+    <span className="shrink-0 text-muted-foreground">{label}</span>
+    <span className={cn("break-all text-right text-foreground", mono && "font-mono text-[11px]")}>{children}</span>
+  </div>
+);
+
+const STATUS_TONE: Record<string, string> = {
+  received: "bg-[var(--success-soft)] text-success",
+  sent: "bg-[var(--success-soft)] text-success",
+  edited: "bg-[var(--info-soft)] text-info",
+  failed: "bg-[var(--danger-soft)] text-destructive",
+  deleted: "bg-muted text-muted-foreground",
+  pending: "bg-[var(--warning-soft)] text-warning",
+};
 
 export const MessageInspector: React.FC = () => {
   const { selectedMessage, setSelectedMessage } = useApp();
   const [viewMode, setViewMode] = useState<"details" | "json">("details");
 
-  if (!selectedMessage) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "24px",
-          height: "100%",
-          color: "var(--text-muted)",
-          textAlign: "center",
-        }}
-      >
-        <Info size={36} style={{ marginBottom: "12px", opacity: 0.5 }} />
-        <h4 style={{ color: "var(--text-secondary)", fontSize: "0.95rem", fontWeight: "600", marginBottom: "6px" }}>
-          Metadata Inspector
-        </h4>
-        <p style={{ fontSize: "0.75rem", lineHeight: "1.5" }}>
-          Select any message in the chat thread to inspect database audit IDs, Telegram IDs, styled entities, media parameters, and raw WebSocket JSON.
-        </p>
-      </div>
-    );
-  }
+  if (!selectedMessage) return null;
 
   const m = selectedMessage;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        backgroundColor: "var(--bg-sidebar)",
-        borderLeft: "1px solid var(--border-color)",
-      }}
-    >
+    <div className="flex h-full w-full flex-col bg-card/95">
       {/* Header */}
-      <div
-        style={{
-          padding: "12px 16px",
-          borderBottom: "1px solid var(--border-color)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <Database size={14} style={{ color: "var(--accent-blue-hover)" }} />
-          <h3 style={{ fontSize: "0.85rem", fontWeight: "700", letterSpacing: "0.05em", color: "var(--text-primary)" }}>
-            INSPECT MESSAGE
-          </h3>
+      <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
+        <div className="flex items-center gap-2">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Database className="size-3.5" />
+          </div>
+          <h3 className="font-serif text-sm font-semibold">消息元数据</h3>
         </div>
-        <button
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 rounded-lg text-muted-foreground hover:text-foreground"
           onClick={() => setSelectedMessage(null)}
-          style={{
-            cursor: "pointer",
-            color: "var(--text-secondary)",
-            padding: "4px",
-            borderRadius: "4px",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = "white")}
-          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
         >
-          <X size={16} />
-        </button>
+          <X className="size-4" />
+        </Button>
       </div>
 
-      {/* Tabs */}
-      <div
-        style={{
-          display: "flex",
-          borderBottom: "1px solid var(--border-color)",
-          backgroundColor: "rgba(0,0,0,0.15)",
-        }}
-      >
-        <button
-          onClick={() => setViewMode("details")}
-          style={{
-            flex: 1,
-            padding: "10px",
-            fontSize: "0.75rem",
-            fontWeight: "600",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "6px",
-            color: viewMode === "details" ? "var(--accent-blue-hover)" : "var(--text-secondary)",
-            borderBottom: viewMode === "details" ? "2px solid var(--accent-blue)" : "none",
-            backgroundColor: viewMode === "details" ? "rgba(255,255,255,0.02)" : "transparent",
-          }}
-        >
-          <Eye size={12} />
-          <span>Audit Details</span>
-        </button>
-        <button
-          onClick={() => setViewMode("json")}
-          style={{
-            flex: 1,
-            padding: "10px",
-            fontSize: "0.75rem",
-            fontWeight: "600",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "6px",
-            color: viewMode === "json" ? "var(--accent-blue-hover)" : "var(--text-secondary)",
-            borderBottom: viewMode === "json" ? "2px solid var(--accent-blue)" : "none",
-            backgroundColor: viewMode === "json" ? "rgba(255,255,255,0.02)" : "transparent",
-          }}
-        >
-          <Code size={12} />
-          <span>Raw JSON</span>
-        </button>
+      {/* View switch */}
+      <div className="shrink-0 border-b px-4 py-2.5">
+        <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "details" | "json")}>
+          <TabsList className="grid w-full grid-cols-2 rounded-xl">
+            <TabsTrigger value="details" className="gap-1.5 rounded-lg text-xs">
+              <Eye className="size-3" />
+              审计详情
+            </TabsTrigger>
+            <TabsTrigger value="json" className="gap-1.5 rounded-lg text-xs">
+              <Code className="size-3" />
+              原始 JSON
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
-      {/* Pane Content */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+      {/* Content */}
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-4">
         {viewMode === "details" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {/* IDs Card */}
-            <div style={{ backgroundColor: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: "6px", border: "1px solid var(--border-color)" }}>
-              <h4 style={{ fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: "700", marginBottom: "8px" }}>IDENTIFIERS</h4>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "0.75rem", fontFamily: "var(--font-mono)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Audit ID:</span>
-                  <span style={{ color: "var(--text-primary)" }}>{m.id}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Telegram ID:</span>
-                  <span style={{ color: m.telegramMessageId ? "var(--accent-blue-hover)" : "var(--accent-red)" }}>
-                    {m.telegramMessageId || "Unassigned (Failed/Pending)"}
-                  </span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Bot ID:</span>
-                  <span>{m.botId}</span>
-                </div>
-              </div>
-            </div>
+          <div className="flex flex-col gap-3">
+            <Section title="标识符 Identifiers">
+              <KvRow label="Audit ID">{m.id}</KvRow>
+              <KvRow label="Telegram ID">
+                <span className={m.telegramMessageId ? "text-primary" : "text-destructive"}>
+                  {m.telegramMessageId || "未分配 (失败/待发送)"}
+                </span>
+              </KvRow>
+              <KvRow label="Bot ID">{m.botId}</KvRow>
+            </Section>
 
-            {/* Attribution */}
-            <div style={{ backgroundColor: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: "6px", border: "1px solid var(--border-color)" }}>
-              <h4 style={{ fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: "700", marginBottom: "8px" }}>ATTRIBUTION</h4>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.75rem" }}>
+            <Section title="归属 Attribution">
+              <div className="flex items-center gap-2.5 text-sm">
                 {m.direction === "outgoing" ? (
                   <>
-                    <Shield size={14} style={{ color: "var(--accent-blue)" }} />
-                    <div>
-                      <div style={{ fontWeight: "600", color: "white" }}>
+                    <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <Shield className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold">
                         {m.sentByInternalUser?.displayName || "System Automator"}
                       </div>
-                      <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                      <div className="font-mono text-[10px] text-muted-foreground">
                         Internal User ID: {m.sentByInternalUser?.id || "N/A"}
                       </div>
                     </div>
                   </>
                 ) : (
                   <>
-                    <User size={14} style={{ color: "var(--accent-green)" }} />
-                    <div>
-                      <div style={{ fontWeight: "600", color: "white" }}>Telegram Third-Party Bot</div>
-                      <div style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>External incoming webhook response</div>
+                    <div className="flex size-8 items-center justify-center rounded-lg bg-[var(--success-soft)] text-success">
+                      <User className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold">Telegram 第三方机器人</div>
+                      <div className="text-[10px] text-muted-foreground">外部传入的 webhook 响应</div>
                     </div>
                   </>
                 )}
               </div>
-            </div>
+            </Section>
 
-            {/* Timestamps & Status */}
-            <div style={{ backgroundColor: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: "6px", border: "1px solid var(--border-color)", fontSize: "0.75rem" }}>
-              <h4 style={{ fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: "700", marginBottom: "8px" }}>STATUS & HISTORY</h4>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Direction:</span>
-                  <span style={{ textTransform: "capitalize" }}>{m.direction}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Sync Status:</span>
-                  <span
-                    style={{
-                      textTransform: "uppercase",
-                      color:
-                        m.status === "received" || m.status === "sent"
-                          ? "var(--accent-green)"
-                          : m.status === "failed"
-                          ? "var(--accent-red)"
-                          : "var(--accent-yellow)",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {m.status}
-                  </span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "4px" }}>
-                  <span style={{ color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: "2px" }}><Calendar size={10} /> Created:</span>
-                  <span>{new Date(m.createdAt).toLocaleString()}</span>
-                </div>
-                {m.editedAt && (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "4px" }}>
-                    <span style={{ color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: "2px" }}><Calendar size={10} /> Edited:</span>
-                    <span>{new Date(m.editedAt).toLocaleString()}</span>
-                  </div>
-                )}
+            <Section title="状态与历史 Status">
+              <KvRow label="方向" mono={false}>
+                <span className="capitalize">{m.direction}</span>
+              </KvRow>
+              <div className="flex items-baseline justify-between gap-3 py-0.5 text-xs">
+                <span className="text-muted-foreground">同步状态</span>
+                <Badge className={cn("h-5 rounded-full border-transparent px-2 text-[10px] font-bold uppercase", STATUS_TONE[m.status] || "bg-muted text-muted-foreground")}>
+                  {m.status}
+                </Badge>
               </div>
-            </div>
+              <KvRow label="创建时间" mono={false}>{new Date(m.createdAt).toLocaleString()}</KvRow>
+              {m.editedAt && <KvRow label="编辑时间" mono={false}>{new Date(m.editedAt).toLocaleString()}</KvRow>}
+              {m.replyToMessageId && <KvRow label="回复消息">{m.replyToMessageId}</KvRow>}
+            </Section>
 
-            {/* Entities Analysis */}
-            <div style={{ backgroundColor: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: "6px", border: "1px solid var(--border-color)" }}>
-              <h4 style={{ fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: "700", marginBottom: "8px" }}>
-                TELEGRAM ENTITIES ({m.entities.length})
-              </h4>
+            <Section title={`样式实体 Entities (${m.entities.length})`}>
               {m.entities.length === 0 ? (
-                <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>No styled entities found in text.</div>
+                <div className="text-xs text-muted-foreground">文本中没有样式实体。</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <div className="flex flex-col gap-1.5">
                   {m.entities.map((ent, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        padding: "6px 8px",
-                        backgroundColor: "rgba(255,255,255,0.03)",
-                        border: "1px solid rgba(255,255,255,0.05)",
-                        borderRadius: "4px",
-                        fontSize: "0.7rem",
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
-                        <span style={{ fontWeight: "bold", color: "var(--accent-blue-hover)" }}>{ent.type}</span>
-                        <span style={{ color: "var(--text-muted)" }}>
+                    <div key={idx} className="rounded-lg border border-border/60 bg-card px-2.5 py-1.5 text-[11px]">
+                      <div className="mb-0.5 flex justify-between">
+                        <span className="font-semibold text-primary">{ent.type}</span>
+                        <span className="text-muted-foreground">
                           offset: {ent.offsetUtf16}, len: {ent.lengthUtf16}
                         </span>
                       </div>
                       {ent.url && (
-                        <div style={{ color: "var(--text-muted)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                          url: <a href={ent.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: "0.65rem" }}>{ent.url}</a>
+                        <div className="truncate text-muted-foreground">
+                          url:{" "}
+                          <a href={ent.url} target="_blank" rel="noopener noreferrer" className="telegram-link">
+                            {ent.url}
+                          </a>
                         </div>
                       )}
-                      {ent.language && (
-                        <div style={{ color: "var(--text-muted)" }}>language: {ent.language}</div>
-                      )}
+                      {ent.language && <div className="text-muted-foreground">language: {ent.language}</div>}
                     </div>
                   ))}
                 </div>
               )}
-            </div>
+            </Section>
 
-            {/* Media Metadata */}
             {m.media && m.media.length > 0 && (
-              <div style={{ backgroundColor: "rgba(0,0,0,0.2)", padding: "12px", borderRadius: "6px", border: "1px solid var(--border-color)" }}>
-                <h4 style={{ fontSize: "0.75rem", color: "var(--text-secondary)", fontWeight: "700", marginBottom: "8px" }}>
-                  MEDIA OBJECTS ({m.media.length})
-                </h4>
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <Section title={`媒体对象 Media (${m.media.length})`}>
+                <div className="flex flex-col gap-1.5">
                   {m.media.map((med, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        padding: "8px",
-                        backgroundColor: "rgba(255,255,255,0.03)",
-                        border: "1px solid rgba(255,255,255,0.05)",
-                        borderRadius: "4px",
-                        fontSize: "0.7rem",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "4px",
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between" }}>
-                        <span style={{ fontWeight: "bold", textTransform: "uppercase" }}>{med.kind}</span>
-                        {"fileId" in med && <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: "0.65rem" }}>{med.fileId}</span>}
+                    <div key={idx} className="flex flex-col gap-1 rounded-lg border border-border/60 bg-card px-2.5 py-1.5 text-[11px]">
+                      <div className="flex justify-between">
+                        <span className="font-bold uppercase">{med.kind}</span>
+                        {"fileId" in med && (
+                          <span className="font-mono text-[10px] text-muted-foreground">{med.fileId}</span>
+                        )}
                       </div>
                       {med.kind === "photo" && (
-                        <div style={{ color: "var(--text-muted)" }}>Dimensions: {med.width}x{med.height}</div>
+                        <div className="text-muted-foreground">尺寸: {med.width}×{med.height}</div>
                       )}
                       {med.kind === "video" && (
-                        <div style={{ color: "var(--text-muted)" }}>
-                          Dimensions: {med.width}x{med.height} | Duration: {med.durationSec}s
+                        <div className="text-muted-foreground">
+                          尺寸: {med.width}×{med.height} · 时长: {med.durationSec}s
                         </div>
                       )}
                       {med.kind === "voice" && (
-                        <div style={{ color: "var(--text-muted)" }}>
-                          Duration: {med.durationSec}s | Waveform samples: {med.waveform?.length}
+                        <div className="text-muted-foreground">
+                          时长: {med.durationSec}s · 波形采样: {med.waveform?.length}
                         </div>
                       )}
                       {med.kind === "document" && (
-                        <div style={{ color: "var(--text-muted)" }}>
-                          Filename: {med.fileName} | Mime: {med.mimeType} | Size: {med.sizeBytes} B
+                        <div className="text-muted-foreground">
+                          文件: {med.fileName} · {med.mimeType} · {med.sizeBytes} B
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
-              </div>
+              </Section>
             )}
           </div>
         ) : (
-          <pre
-            style={{
-              margin: 0,
-              padding: "10px",
-              backgroundColor: "rgba(0,0,0,0.3)",
-              border: "1px solid var(--border-color)",
-              borderRadius: "6px",
-              fontFamily: "var(--font-mono)",
-              fontSize: "0.7rem",
-              color: "#34d399",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-              overflowX: "auto",
-            }}
-          >
+          <pre className="scrollbar-thin overflow-x-auto whitespace-pre-wrap break-all rounded-xl border bg-foreground/5 p-3 font-mono text-[11px] leading-relaxed text-foreground">
             {JSON.stringify(m, null, 2)}
           </pre>
         )}

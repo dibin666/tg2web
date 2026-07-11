@@ -1,184 +1,141 @@
 import React, { useState } from "react";
 import { useApp } from "../context/AppContext";
-import { Terminal, Trash2 } from "lucide-react";
+import { Terminal, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { AppEvent } from "../api/types";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+const badgeToneFor = (type: string) => {
+  if (type.includes("failed") || type.includes("error")) return "bg-[var(--danger-soft)] text-destructive";
+  if (type.startsWith("message.")) return "bg-[var(--success-soft)] text-success";
+  if (type.startsWith("draft.")) return "bg-primary/10 text-primary";
+  if (type.startsWith("download")) return "bg-[var(--info-soft)] text-info";
+  if (type.startsWith("bot.")) return "bg-[var(--warning-soft)] text-warning";
+  if (type === "file.new") return "bg-primary/10 text-primary";
+  return "bg-muted text-muted-foreground";
+};
+
+const getEventSummary = (ev: AppEvent) => {
+  switch (ev.type) {
+    case "connection.status":
+      return `TDLib connection state: ${ev.status}`;
+    case "telegram.auth_state":
+      return `Telegram authorization: ${ev.authState}, TDLib: ${ev.tdlibState}`;
+    case "bot.published":
+      return `Bot published: ${ev.bot.title}`;
+    case "bot.updated":
+      return `Bot updated: ${ev.bot.title}`;
+    case "bot.unpublished":
+      return `Bot unpublished: ${ev.botId}`;
+    case "message.new":
+      return `New message [${ev.message.id}] direction=${ev.message.direction} status=${ev.message.status}`;
+    case "message.edited":
+      return `Message edited [${ev.message.id}] text preview: "${ev.message.text?.substring(0, 20)}..."`;
+    case "message.deleted":
+      return `Message deleted: [${ev.messageId}]`;
+    case "message.send_ack":
+      return `Message ACK: Request ID [${ev.clientRequestId}] assigned Telegram Message ID [${ev.messageId}]`;
+    case "message.send_failed":
+      return `Message SEND FAILED: Request ID [${ev.clientRequestId}] Error: ${ev.error}`;
+    case "draft.pending":
+      return `Draft pending [${ev.draft.draftId}]: "${ev.draft.text.substring(0, 25)}..."`;
+    case "draft.expired":
+      return `Draft expired/cancelled: [${ev.draftId}]`;
+    case "draft.finalized":
+      return `Draft finalized: [${ev.draftId}] -> permanent message ID [${ev.finalMessageId}]`;
+    case "download.progress": {
+      const pct = ev.download.sizeBytes ? Math.round((ev.download.downloadedBytes / ev.download.sizeBytes) * 100) : 0;
+      return `Download progress [${ev.download.id}]: ${pct}% (${ev.download.downloadedBytes} B)`;
+    }
+    case "download.ready":
+      return `Download ready [${ev.download.id}]: ${ev.download.proxyUrl || ev.download.fileId}`;
+    case "download.failed":
+      return `Download failed [${ev.download.id}]: ${ev.download.error || "connection failure"}`;
+    case "download_queue.item_updated":
+      return `Queue item ${ev.item.status}: ${ev.item.title}`;
+    case "download_queue.cleared":
+      return "Download queue cleared";
+    case "file.new":
+      return `New workspace file [${ev.file.id}]: "${ev.file.fileName}" (${ev.file.mimeType}) sender=${ev.file.senderName}`;
+    case "telegram.error":
+      return `Telegram error code [${ev.code}]: ${ev.message}`;
+    default:
+      return JSON.stringify(ev);
+  }
+};
 
 export const EventLogPanel: React.FC = () => {
   const { eventLog, clearEventLog } = useApp();
   const [isOpen, setIsOpen] = useState(true);
 
-  const getEventBadgeStyle = (type: string) => {
-    if (type.startsWith("message.")) return { bg: "var(--accent-green-transparent)", text: "var(--accent-green)" };
-    if (type.startsWith("draft.")) return { bg: "var(--accent-blue-transparent)", text: "var(--accent-blue-hover)" };
-    if (type.startsWith("download.")) return { bg: "rgba(147, 51, 234, 0.15)", text: "#7c3aed" };
-    if (type.startsWith("download_queue.")) return { bg: "rgba(147, 51, 234, 0.15)", text: "#7c3aed" };
-    if (type.startsWith("bot.")) return { bg: "rgba(14, 165, 233, 0.12)", text: "#0369a1" };
-    if (type === "file.new") return { bg: "rgba(236, 72, 153, 0.15)", text: "#be185d" };
-    if (type.includes("failed") || type.includes("error")) return { bg: "var(--accent-red-transparent)", text: "var(--accent-red)" };
-    return { bg: "rgba(255,255,255,0.05)", text: "var(--text-secondary)" };
-  };
-
-  const getEventSummary = (ev: AppEvent) => {
-    switch (ev.type) {
-      case "connection.status":
-        return `TDLib connection state: ${ev.status}`;
-      case "telegram.auth_state":
-        return `Telegram authorization: ${ev.authState}, TDLib: ${ev.tdlibState}`;
-      case "bot.published":
-        return `Bot published: ${ev.bot.title}`;
-      case "bot.updated":
-        return `Bot updated: ${ev.bot.title}`;
-      case "bot.unpublished":
-        return `Bot unpublished: ${ev.botId}`;
-      case "message.new":
-        return `New message [${ev.message.id}] direction=${ev.message.direction} status=${ev.message.status}`;
-      case "message.edited":
-        return `Message edited [${ev.message.id}] text preview: "${ev.message.text?.substring(0, 20)}..."`;
-      case "message.deleted":
-        return `Message deleted: [${ev.messageId}]`;
-      case "message.send_ack":
-        return `Message ACK: Request ID [${ev.clientRequestId}] assigned Telegram Message ID [${ev.messageId}]`;
-      case "message.send_failed":
-        return `Message SEND FAILED: Request ID [${ev.clientRequestId}] Error: ${ev.error}`;
-      case "draft.pending":
-        return `Draft pending [${ev.draft.draftId}]: "${ev.draft.text.substring(0, 25)}..."`;
-      case "draft.expired":
-        return `Draft expired/cancelled: [${ev.draftId}]`;
-      case "draft.finalized":
-        return `Draft finalized: [${ev.draftId}] -> permanent message ID [${ev.finalMessageId}]`;
-      case "download.progress": {
-        const pct = ev.download.sizeBytes ? Math.round((ev.download.downloadedBytes / ev.download.sizeBytes) * 100) : 0;
-        return `Download progress [${ev.download.id}]: ${pct}% (${ev.download.downloadedBytes} B)`;
-      }
-      case "download.ready":
-        return `Download ready [${ev.download.id}]: ${ev.download.proxyUrl || ev.download.fileId}`;
-      case "download.failed":
-        return `Download failed [${ev.download.id}]: ${ev.download.error || "connection failure"}`;
-      case "download_queue.item_updated":
-        return `Queue item ${ev.item.status}: ${ev.item.title}`;
-      case "download_queue.cleared":
-        return "Download queue cleared";
-      case "file.new":
-        return `New workspace file [${ev.file.id}]: "${ev.file.fileName}" (${ev.file.mimeType}) sender=${ev.file.senderName}`;
-      case "telegram.error":
-        return `Telegram error code [${ev.code}]: ${ev.message}`;
-      default:
-        return JSON.stringify(ev);
-    }
-  };
-
   return (
     <div
-      style={{
-        borderTop: "1px solid var(--border-color)",
-        backgroundColor: "#090d16",
-        display: "flex",
-        flexDirection: "column",
-        height: isOpen ? "220px" : "36px",
-        transition: "height 0.2s ease-in-out",
-        zIndex: 5,
-        position: "relative",
-      }}
+      className={cn(
+        "flex shrink-0 flex-col overflow-hidden rounded-2xl border bg-card transition-[height] duration-200 max-md:rounded-none max-md:border-x-0 max-md:border-b-0",
+        isOpen ? "h-56" : "h-10"
+      )}
     >
-      <div
+      {/* Toggle header */}
+      <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
-        style={{
-          height: "36px",
-          padding: "0 16px",
-          backgroundColor: "#0d1322",
-          borderBottom: isOpen ? "1px solid var(--border-color)" : "none",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          cursor: "pointer",
-          userSelect: "none",
-        }}
+        className={cn(
+          "flex h-10 shrink-0 select-none items-center justify-between px-4 transition-colors hover:bg-accent/40",
+          isOpen && "border-b"
+        )}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <Terminal size={14} style={{ color: "var(--accent-yellow)" }} />
-          <span style={{ fontSize: "0.75rem", fontWeight: "700" }}>WebSocket Event Feed</span>
+        <div className="flex items-center gap-2">
+          <Terminal className="size-3.5 text-warning" />
+          <span className="text-xs font-semibold">WebSocket 事件流</span>
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+            {eventLog.length}
+          </span>
         </div>
-        <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
-          {isOpen ? "Collapse" : "Expand"}
-        </div>
-      </div>
+        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          {isOpen ? "收起" : "展开"}
+          {isOpen ? <ChevronDown className="size-3" /> : <ChevronUp className="size-3" />}
+        </span>
+      </button>
 
       {isOpen && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "6px 12px",
-              borderBottom: "1px solid var(--border-color)",
-              backgroundColor: "rgba(0,0,0,0.1)",
-            }}
-          >
-            <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "var(--text-muted)" }}>
-              Backend events
-            </div>
-            <button
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex shrink-0 items-center justify-between border-b bg-background/40 px-4 py-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground">后端事件</span>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={clearEventLog}
               disabled={eventLog.length === 0}
-              style={{
-                fontSize: "0.65rem",
-                color: eventLog.length === 0 ? "var(--text-muted)" : "var(--accent-red)",
-                cursor: eventLog.length === 0 ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "3px",
-              }}
+              className="h-6 rounded-md px-2 text-[11px] text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
             >
-              <Trash2 size={10} />
-              <span>Clear Feed</span>
-            </button>
+              <Trash2 className="size-3" />
+              清空
+            </Button>
           </div>
 
-          <div style={{ flex: 1, overflowY: "auto", padding: "10px", display: "flex", flexDirection: "column", gap: "6px" }}>
+          <div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2.5">
             {eventLog.length === 0 ? (
-              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontStyle: "italic", textAlign: "center", marginTop: "24px" }}>
-                No backend events received yet.
-              </div>
+              <div className="mt-8 text-center text-xs italic text-muted-foreground">还没有收到后端事件。</div>
             ) : (
-              eventLog.map((ev, idx) => {
-                const badge = getEventBadgeStyle(ev.type);
-                return (
-                  <div
-                    key={`${ev.eventId}-${idx}`}
-                    style={{
-                      display: "flex",
-                      gap: "10px",
-                      alignItems: "flex-start",
-                      fontSize: "0.7rem",
-                      fontFamily: "var(--font-mono)",
-                      borderBottom: "1px solid rgba(255, 255, 255, 0.02)",
-                      paddingBottom: "4px",
-                    }}
+              eventLog.map((ev, idx) => (
+                <div
+                  key={`${ev.eventId}-${idx}`}
+                  className="flex items-start gap-2.5 border-b border-border/40 pb-1 font-mono text-[11px] leading-relaxed"
+                >
+                  <span className="shrink-0 text-muted-foreground">
+                    {new Date(ev.occurredAt).toLocaleTimeString([], { hour12: false })}
+                  </span>
+                  <span
+                    className={cn(
+                      "min-w-32 shrink-0 rounded-md px-1.5 py-px text-center text-[10px] font-bold",
+                      badgeToneFor(ev.type)
+                    )}
                   >
-                    <span style={{ color: "var(--text-muted)" }}>
-                      {new Date(ev.occurredAt).toLocaleTimeString([], { hour12: false })}
-                    </span>
-                    <span
-                      style={{
-                        backgroundColor: badge.bg,
-                        color: badge.text,
-                        padding: "1px 6px",
-                        borderRadius: "4px",
-                        fontWeight: "bold",
-                        fontSize: "0.65rem",
-                        minWidth: "120px",
-                        textAlign: "center",
-                      }}
-                    >
-                      {ev.type}
-                    </span>
-                    <span style={{ color: "var(--text-primary)", flex: 1, wordBreak: "break-all" }}>
-                      {getEventSummary(ev)}
-                    </span>
-                  </div>
-                );
-              })
+                    {ev.type}
+                  </span>
+                  <span className="min-w-0 flex-1 break-all text-foreground/90">{getEventSummary(ev)}</span>
+                </div>
+              ))
             )}
           </div>
         </div>

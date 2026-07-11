@@ -1,104 +1,42 @@
 import React from "react";
 import { PendingDraft } from "../api/types";
 import { EntityTextRenderer } from "./EntityTextRenderer";
+import { BotAvatar } from "./BotAvatar";
 import { Sparkles, Terminal } from "lucide-react";
+import { useApp } from "../context/AppContext";
 
 interface PendingDraftBubbleProps {
   draft: PendingDraft;
 }
 
 export const PendingDraftBubble: React.FC<PendingDraftBubbleProps> = ({ draft }) => {
+  const { bots } = useApp();
+  const bot = bots.find((b) => b.id === draft.botId);
+
   return (
-    <div
-      className="message-entry"
-      style={{
-        display: "flex",
-        justifyContent: "flex-start",
-        margin: "4px 0",
-        width: "100%",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "flex-start",
-          maxWidth: "75%",
-          minWidth: "180px",
-        }}
-      >
+    <div className="message-entry my-1 flex w-full items-end gap-2.5">
+      <BotAvatar id={draft.botId} title={bot?.title || "Bot"} size={36} />
+
+      <div className="flex min-w-[180px] max-w-[78%] flex-col items-start">
         {/* Label */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "4px",
-            fontSize: "0.7rem",
-            color: "var(--accent-blue-hover)",
-            marginBottom: "2px",
-            padding: "0 4px",
-            fontWeight: "600",
-          }}
-        >
-          <Sparkles size={10} className="animate-pulse-slow" />
-          <span>Telegram Draft Streaming...</span>
+        <div className="mb-1 flex items-center gap-1 px-1 text-[11px] font-medium text-primary">
+          <Sparkles className="size-3 animate-pulse" />
+          <span>Telegram 草稿流式传输中...</span>
         </div>
 
-        {/* Draft Bubble body */}
-        <div
-          style={{
-            backgroundColor: "var(--bubble-draft)",
-            border: "1px dashed var(--accent-blue)",
-            borderRadius: "12px 12px 12px 2px",
-            padding: "6px 10px",
-            position: "relative",
-            width: "100%",
-            boxShadow: "0 0 10px rgba(59, 130, 246, 0.15)",
-            transition: "all 0.25s ease",
-          }}
-        >
-          {/* Main text */}
-          <div
-            style={{
-              fontSize: "0.9rem",
-              lineHeight: "1.4",
-              color: "var(--text-primary)",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
+        {/* Draft body */}
+        <div className="w-full rounded-2xl rounded-bl-md border border-dashed border-primary/50 bg-primary/5 px-3.5 py-2.5">
+          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
             <EntityTextRenderer text={draft.text} entities={draft.entities} />
-            <span
-              style={{
-                display: "inline-block",
-                width: "4px",
-                height: "14px",
-                backgroundColor: "var(--accent-blue)",
-                marginLeft: "3px",
-                verticalAlign: "middle",
-              }}
-              className="animate-pulse-slow"
-            />
+            <span className="typing-caret ml-0.5 inline-block h-3.5 w-1 translate-y-0.5 rounded-full bg-primary" />
           </div>
 
-          {/* Footer details */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginTop: "6px",
-              fontSize: "0.6rem",
-              color: "var(--text-muted)",
-            }}
-          >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
-              <Terminal size={8} />
-              <span>ID: {draft.draftId}</span>
+          <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <Terminal className="size-2.5" />
+              <span className="font-mono">{draft.draftId}</span>
             </span>
-            <span>
-              Live {new Date(draft.receivedAt).toLocaleTimeString([], { second: "2-digit" })}
-            </span>
+            <span>{new Date(draft.receivedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
           </div>
         </div>
       </div>
